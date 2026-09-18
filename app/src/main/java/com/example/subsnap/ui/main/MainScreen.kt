@@ -174,6 +174,8 @@ fun MainScreen(
     val ttsLocale by viewModel.ttsLocale.collectAsStateWithLifecycle()
     val ocrRegion by viewModel.ocrRegion.collectAsStateWithLifecycle()
     val skipDuplicateSubtitles by viewModel.skipDuplicateSubtitles.collectAsStateWithLifecycle()
+    val autoCaptureIntervalSec by viewModel.autoCaptureIntervalSec.collectAsStateWithLifecycle()
+    val autoStartAutoCapture by viewModel.autoStartAutoCapture.collectAsStateWithLifecycle()
     val releasesHistory by viewModel.releasesHistory.collectAsStateWithLifecycle()
     val versionDiff by viewModel.versionDiff.collectAsStateWithLifecycle()
     val isLoadingHistory by viewModel.isLoadingHistory.collectAsStateWithLifecycle()
@@ -229,8 +231,17 @@ fun MainScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            ScreenCaptureService.start(context, result.resultCode, result.data!!)
-            Toast.makeText(context, "Служба запущена! Появился плавающий виджет", Toast.LENGTH_SHORT).show()
+            ScreenCaptureService.start(
+                context,
+                result.resultCode,
+                result.data!!,
+                autoStart = autoStartAutoCapture
+            )
+            val msg = if (autoStartAutoCapture)
+                "Служба запущена! Авто-захват субтитров АКТИВЕН"
+            else
+                "Служба запущена! Нажимайте на кружок для снимка"
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "Разрешение на захват экрана не получено", Toast.LENGTH_SHORT).show()
         }
@@ -354,6 +365,8 @@ fun MainScreen(
                         hasOverlay = hasOverlayPermission,
                         hasNotification = hasNotificationPermission,
                         serviceState = serviceState,
+                        autoCaptureInterval = autoCaptureIntervalSec,
+                        onToggleAutoCapture = { viewModel.toggleAutoCapture() },
                         onRequestOverlay = {
                             val intent = Intent(
                                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -749,6 +762,8 @@ fun MainScreen(
             currentTtsLocale = ttsLocale,
             currentOcrRegion = ocrRegion,
             currentSkipDuplicates = skipDuplicateSubtitles,
+            currentAutoCaptureInterval = autoCaptureIntervalSec,
+            currentAutoStartAutoCapture = autoStartAutoCapture,
             isCheckingUpdate = isCheckingUpdate,
             onOpenReleaseHistory = {
                 showReleaseHistoryDialog = true
@@ -758,7 +773,7 @@ fun MainScreen(
                 ttsHelper.speak("Hello! This is a pronunciation test for SubSnap.", speed, locale)
             },
             onCheckForUpdates = { viewModel.checkForUpdates(userInitiated = true) },
-            onSave = { newKey, newModel, newFilterEmpty, newRepo, newTtsSpeed, newTtsLocale, newOcrRegion, newSkipDuplicates ->
+            onSave = { newKey, newModel, newFilterEmpty, newRepo, newTtsSpeed, newTtsLocale, newOcrRegion, newSkipDuplicates, newInterval, newAutoStart ->
                 viewModel.setApiKey(newKey)
                 viewModel.setSelectedModel(newModel)
                 viewModel.setFilterEmptyScreenshots(newFilterEmpty)
@@ -767,6 +782,8 @@ fun MainScreen(
                 viewModel.setTtsLocale(newTtsLocale)
                 viewModel.setOcrRegion(newOcrRegion)
                 viewModel.setSkipDuplicateSubtitles(newSkipDuplicates)
+                viewModel.setAutoCaptureIntervalSec(newInterval)
+                viewModel.setAutoStartAutoCapture(newAutoStart)
                 showSettingsDialog = false
                 Toast.makeText(context, "Настройки сохранены", Toast.LENGTH_SHORT).show()
             },
@@ -1395,6 +1412,8 @@ fun SettingsDialog(
     currentTtsLocale: String,
     currentOcrRegion: String,
     currentSkipDuplicates: Boolean,
+    currentAutoCaptureInterval: Float,
+    currentAutoStartAutoCapture: Boolean,
     isCheckingUpdate: Boolean,
     onOpenReleaseHistory: () -> Unit,
     onTestTts: (Float, String) -> Unit,
@@ -1407,7 +1426,9 @@ fun SettingsDialog(
         ttsSpeed: Float,
         ttsLocale: String,
         ocrRegion: String,
-        skipDuplicates: Boolean
+        skipDuplicates: Boolean,
+        autoCaptureInterval: Float,
+        autoStartAutoCapture: Boolean
     ) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1419,6 +1440,8 @@ fun SettingsDialog(
     var ttsLocale by remember { mutableStateOf(currentTtsLocale) }
     var ocrRegion by remember { mutableStateOf(currentOcrRegion) }
     var skipDuplicates by remember { mutableStateOf(currentSkipDuplicates) }
+    var autoCaptureInterval by remember { mutableStateOf(currentAutoCaptureInterval) }
+    var autoStartAutoCapture by remember { mutableStateOf(currentAutoStartAutoCapture) }
     var isModelDropdownExpanded by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1595,7 +1618,76 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // 2. ОЗВУЧКА СЛОВ (TTS)
+                // 2. АВТО-ЗАХВАТ СУБТИТРОВ
+                Text(
+                    text = "АВТО-ЗАХВАТ СУБТИТРОВ",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Интервал проверки экрана:",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${String.format(java.util.Locale.US, "%.1f", autoCaptureInterval)} сек",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Slider(
+                    value = autoCaptureInterval,
+                    onValueChange = { autoCaptureInterval = (it * 2).toInt() / 2f },
+                    valueRange = 1.5f..8.0f,
+                    steps = 12,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(
+                    text = "⚡ Быстрое сканирование (1.5–3.0 сек) позволяет не пропускать короткие реплики в YouTube и фильмах. ML Kit оффлайн анализирует кадр за ~30 мс и сохраняет скриншот только при появлении нового текста.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Авто-старт при запуске",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Сразу включать авто-захват при старте виджета",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = autoStartAutoCapture,
+                        onCheckedChange = { autoStartAutoCapture = it }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // 3. ОЗВУЧКА СЛОВ (TTS)
                 Text(
                     text = "ОЗВУЧКА СЛОВ (TTS)",
                     fontSize = 11.sp,
@@ -1745,7 +1837,9 @@ fun SettingsDialog(
                                 ttsSpeed,
                                 ttsLocale,
                                 ocrRegion,
-                                skipDuplicates
+                                skipDuplicates,
+                                autoCaptureInterval,
+                                autoStartAutoCapture
                             )
                         },
                         modifier = Modifier.weight(1f)
@@ -2634,6 +2728,8 @@ fun ControlPanelCard(
     hasOverlay: Boolean,
     hasNotification: Boolean,
     serviceState: ScreenCaptureService.Companion.ServiceState,
+    autoCaptureInterval: Float,
+    onToggleAutoCapture: () -> Unit,
     onRequestOverlay: () -> Unit,
     onRequestNotification: () -> Unit,
     onStartService: () -> Unit,
@@ -2713,15 +2809,53 @@ fun ControlPanelCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Остановить захват", fontWeight = FontWeight.Bold)
                 }
-            }
 
-            if (serviceState.isRunning) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (serviceState.isAutoCapture) "⏱️ Включен режим авто-захвата по таймеру" else "📸 Ручной режим: нажимайте на плавающую кнопку поверх экрана",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Auto-capture toggle switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Авто-захват субтитров",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = if (serviceState.isAutoCapture) Color(0xFF10B981) else Color(0xFF9E9E9E)
+                            ) {
+                                Text(
+                                    text = if (serviceState.isAutoCapture) "АКТИВЕН" else "ВЫКЛ",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = if (serviceState.isAutoCapture)
+                                "Сканирует экран каждые ${String.format(java.util.Locale.US, "%.1f", autoCaptureInterval)}с (ML Kit фильтр)"
+                            else
+                                "Кадры делаются по нажатию на плавающую кнопку",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Switch(
+                        checked = serviceState.isAutoCapture,
+                        onCheckedChange = { onToggleAutoCapture() }
+                    )
+                }
             }
         }
     }

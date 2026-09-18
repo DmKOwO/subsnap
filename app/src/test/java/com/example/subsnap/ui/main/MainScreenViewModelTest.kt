@@ -29,4 +29,10 @@ class MainScreenViewModelTest {
         assertEquals(true, models.contains("gemini-3.5-flash"))
         assertEquals(true, models.contains("gemini-3.1-flash-lite"))
     }
+
+    @Test
+    fun settingsRepository_defaultAutoCaptureInterval_isReasonableForSubtitles() {
+        val interval = com.example.subsnap.data.SettingsRepository.DEFAULT_AUTO_CAPTURE_INTERVAL
+        assertEquals(true, interval in 1.5f..4.0f)
+    }
 }

@@ -109,6 +109,13 @@ class ScreenCaptureService : Service() {
                     initMediaProjection(resultCode, resultData)
                     setupOverlay()
                     _serviceState.update { it.copy(isRunning = true, isAutoCapture = false) }
+                    val shouldAutoStart = intent.getBooleanExtra(
+                        EXTRA_START_AUTO,
+                        settingsRepository.autoStartAutoCapture.value
+                    )
+                    if (shouldAutoStart) {
+                        startAutoCapture()
+                    }
                 } else {
                     stopSelf()
                 }
@@ -121,6 +128,12 @@ class ScreenCaptureService : Service() {
             }
             ACTION_TOGGLE_AUTO -> {
                 toggleAutoCapture()
+            }
+            ACTION_START_AUTO -> {
+                startAutoCapture()
+            }
+            ACTION_STOP_AUTO -> {
+                stopAutoCapture()
             }
         }
         return START_NOT_STICKY
@@ -411,12 +424,16 @@ class ScreenCaptureService : Service() {
         autoCaptureJob?.cancel()
         _serviceState.update { it.copy(isAutoCapture = true) }
         overlayManager?.updateAutoCaptureState(true)
-        updateNotification("Авто-захват включен (каждые 6–14 секунд)")
+
+        val intervalSec = settingsRepository.autoCaptureIntervalSec.value
+        val intervalMs = (intervalSec * 1000).toLong().coerceIn(1000L, 15000L)
+        updateNotification("Авто-захват включен (каждые ${String.format(java.util.Locale.US, "%.1f", intervalSec)} сек)")
 
         autoCaptureJob = serviceScope.launch {
             while (_serviceState.value.isAutoCapture) {
-                val nextDelay = Random.nextLong(6000L, 14000L)
-                delay(nextDelay)
+                val currentIntervalSec = settingsRepository.autoCaptureIntervalSec.value
+                val delayMs = (currentIntervalSec * 1000).toLong().coerceIn(1000L, 15000L)
+                delay(delayMs)
                 if (_serviceState.value.isAutoCapture) {
                     captureAndSave(isAutoMode = true)
                 }
@@ -441,6 +458,7 @@ class ScreenCaptureService : Service() {
             onCloseClick = { stopSelf() }
         ).apply {
             show()
+            updateAutoCaptureState(_serviceState.value.isAutoCapture)
         }
     }
 
@@ -528,9 +546,12 @@ class ScreenCaptureService : Service() {
         const val ACTION_STOP = "com.example.subsnap.action.STOP"
         const val ACTION_TRIGGER_CAPTURE = "com.example.subsnap.action.CAPTURE"
         const val ACTION_TOGGLE_AUTO = "com.example.subsnap.action.TOGGLE_AUTO"
+        const val ACTION_START_AUTO = "com.example.subsnap.action.START_AUTO"
+        const val ACTION_STOP_AUTO = "com.example.subsnap.action.STOP_AUTO"
 
         const val EXTRA_RESULT_CODE = "extra_result_code"
         const val EXTRA_RESULT_DATA = "extra_result_data"
+        const val EXTRA_START_AUTO = "extra_start_auto"
 
         data class ServiceState(
             val isRunning: Boolean = false,
@@ -542,11 +563,14 @@ class ScreenCaptureService : Service() {
         private val _serviceState = MutableStateFlow(ServiceState())
         val serviceState: StateFlow<ServiceState> = _serviceState.asStateFlow()
 
-        fun start(context: Context, resultCode: Int, resultData: Intent) {
+        fun start(context: Context, resultCode: Int, resultData: Intent, autoStart: Boolean? = null) {
             val intent = Intent(context, ScreenCaptureService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_RESULT_CODE, resultCode)
                 putExtra(EXTRA_RESULT_DATA, resultData)
+                if (autoStart != null) {
+                    putExtra(EXTRA_START_AUTO, autoStart)
+                }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -558,6 +582,20 @@ class ScreenCaptureService : Service() {
         fun stop(context: Context) {
             val intent = Intent(context, ScreenCaptureService::class.java).apply {
                 action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+
+        fun toggleAuto(context: Context) {
+            val intent = Intent(context, ScreenCaptureService::class.java).apply {
+                action = ACTION_TOGGLE_AUTO
+            }
+            context.startService(intent)
+        }
+
+        fun setAuto(context: Context, enabled: Boolean) {
+            val intent = Intent(context, ScreenCaptureService::class.java).apply {
+                action = if (enabled) ACTION_START_AUTO else ACTION_STOP_AUTO
             }
             context.startService(intent)
         }

@@ -19,6 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -33,10 +34,11 @@ class OverlayManager(
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var rootLayout: LinearLayout? = null
-    private var mainBubble: LinearLayout? = null
+    private var mainBubble: View? = null
     private var menuContainer: LinearLayout? = null
     private var autoStatusDot: View? = null
     private var autoStatusText: TextView? = null
+    private var autoBadge: TextView? = null
 
     private var isMenuExpanded = false
     private var isAutoCapturing = false
@@ -117,6 +119,18 @@ class OverlayManager(
                 bg?.setColor(if (enabled) Color.parseColor("#4CAF50") else Color.parseColor("#9E9E9E"))
             }
             autoStatusText?.text = if (enabled) "Авто: ВКЛ" else "Авто: ВЫКЛ"
+
+            mainBubble?.let { bubble ->
+                val bg = bubble.background as? GradientDrawable
+                if (enabled) {
+                    bg?.colors = intArrayOf(Color.parseColor("#059669"), Color.parseColor("#047857"))
+                    bg?.setStroke(dp(3f), Color.parseColor("#34D399"))
+                } else {
+                    bg?.colors = intArrayOf(Color.parseColor("#6366F1"), Color.parseColor("#4338CA"))
+                    bg?.setStroke(dp(2f), Color.parseColor("#FFFFFF"))
+                }
+            }
+            autoBadge?.visibility = if (enabled) View.VISIBLE else View.GONE
         }
     }
 
@@ -216,28 +230,53 @@ class OverlayManager(
         container.addView(menuContainer)
 
         // Main draggable bubble
-        mainBubble = LinearLayout(context).apply {
+        val bubbleFrame = FrameLayout(context).apply {
             val size = dp(56f)
             layoutParams = LinearLayout.LayoutParams(size, size).apply {
                 topMargin = dp(6f)
             }
-            gravity = Gravity.CENTER
             elevation = dp(8f).toFloat()
 
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                colors = intArrayOf(Color.parseColor("#6366F1"), Color.parseColor("#4338CA"))
+                if (isAutoCapturing) {
+                    colors = intArrayOf(Color.parseColor("#059669"), Color.parseColor("#047857"))
+                    setStroke(dp(3f), Color.parseColor("#34D399"))
+                } else {
+                    colors = intArrayOf(Color.parseColor("#6366F1"), Color.parseColor("#4338CA"))
+                    setStroke(dp(2f), Color.parseColor("#FFFFFF"))
+                }
                 orientation = GradientDrawable.Orientation.TL_BR
-                setStroke(dp(2f), Color.parseColor("#FFFFFF"))
             }
 
             val icon = ImageView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(dp(28f), dp(28f))
+                layoutParams = FrameLayout.LayoutParams(dp(26f), dp(26f), Gravity.CENTER)
                 setImageResource(android.R.drawable.ic_menu_camera)
                 setColorFilter(Color.WHITE)
             }
             addView(icon)
+
+            autoBadge = TextView(context).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                ).apply {
+                    bottomMargin = dp(4f)
+                }
+                text = "AUTO"
+                textSize = 8f
+                setTextColor(Color.parseColor("#A7F3D0"))
+                setPadding(dp(4f), dp(1f), dp(4f), dp(1f))
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#DD064E3B"))
+                    cornerRadius = dp(4f).toFloat()
+                }
+                visibility = if (isAutoCapturing) View.VISIBLE else View.GONE
+            }
+            addView(autoBadge)
         }
+        mainBubble = bubbleFrame
 
         setupDraggable(mainBubble!!)
         container.addView(mainBubble)

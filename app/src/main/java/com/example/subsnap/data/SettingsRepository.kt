@@ -41,6 +41,16 @@ class SettingsRepository(context: Context) {
     )
     val skipDuplicateSubtitles: StateFlow<Boolean> = _skipDuplicateSubtitles.asStateFlow()
 
+    private val _autoCaptureIntervalSec = MutableStateFlow(
+        prefs.getFloat(KEY_AUTO_CAPTURE_INTERVAL, DEFAULT_AUTO_CAPTURE_INTERVAL)
+    )
+    val autoCaptureIntervalSec: StateFlow<Float> = _autoCaptureIntervalSec.asStateFlow()
+
+    private val _autoStartAutoCapture = MutableStateFlow(
+        prefs.getBoolean(KEY_AUTO_START_CAPTURE, true)
+    )
+    val autoStartAutoCapture: StateFlow<Boolean> = _autoStartAutoCapture.asStateFlow()
+
     private fun getSanitizedModel(): String {
         val saved = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
         // Automatically migrate deprecated models (gemini-1.5, gemini-2.0, gemini-2.5, etc.) to gemini-3.8-flash
@@ -100,6 +110,17 @@ class SettingsRepository(context: Context) {
         _skipDuplicateSubtitles.value = skip
     }
 
+    fun setAutoCaptureIntervalSec(interval: Float) {
+        val clamped = interval.coerceIn(1.0f, 10.0f)
+        prefs.edit().putFloat(KEY_AUTO_CAPTURE_INTERVAL, clamped).apply()
+        _autoCaptureIntervalSec.value = clamped
+    }
+
+    fun setAutoStartAutoCapture(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_START_CAPTURE, enabled).apply()
+        _autoStartAutoCapture.value = enabled
+    }
+
     val isConfigured: Boolean
         get() = _apiKey.value.isNotBlank()
 
@@ -112,7 +133,10 @@ class SettingsRepository(context: Context) {
         private const val KEY_TTS_LOCALE = "tts_locale"
         private const val KEY_OCR_REGION = "ocr_region"
         private const val KEY_SKIP_DUPLICATES = "skip_duplicate_subtitles"
+        private const val KEY_AUTO_CAPTURE_INTERVAL = "auto_capture_interval_sec"
+        private const val KEY_AUTO_START_CAPTURE = "auto_start_auto_capture"
         const val DEFAULT_GITHUB_REPO = "DmKOwO/subsnap"
+        const val DEFAULT_AUTO_CAPTURE_INTERVAL = 2.5f
 
         // Updated for modern Gemini models in Google AI Studio
         const val DEFAULT_MODEL = "gemini-3.8-flash"

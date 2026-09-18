@@ -50,6 +50,8 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     val ttsLocale: StateFlow<String> = settingsRepository.ttsLocale
     val ocrRegion: StateFlow<String> = settingsRepository.ocrRegion
     val skipDuplicateSubtitles: StateFlow<Boolean> = settingsRepository.skipDuplicateSubtitles
+    val autoCaptureIntervalSec: StateFlow<Float> = settingsRepository.autoCaptureIntervalSec
+    val autoStartAutoCapture: StateFlow<Boolean> = settingsRepository.autoStartAutoCapture
 
     private val _releasesHistory = MutableStateFlow<List<AppReleaseRecord>>(emptyList())
     val releasesHistory: StateFlow<List<AppReleaseRecord>> = _releasesHistory.asStateFlow()
@@ -283,6 +285,22 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setSkipDuplicateSubtitles(skip: Boolean) {
         settingsRepository.setSkipDuplicateSubtitles(skip)
+    }
+
+    fun setAutoCaptureIntervalSec(interval: Float) {
+        settingsRepository.setAutoCaptureIntervalSec(interval)
+    }
+
+    fun setAutoStartAutoCapture(enabled: Boolean) {
+        settingsRepository.setAutoStartAutoCapture(enabled)
+    }
+
+    fun toggleAutoCapture() {
+        ScreenCaptureService.toggleAuto(getApplication())
+    }
+
+    fun setAutoCapture(enabled: Boolean) {
+        ScreenCaptureService.setAuto(getApplication(), enabled)
     }
 
     fun setGithubRepo(repo: String) {
