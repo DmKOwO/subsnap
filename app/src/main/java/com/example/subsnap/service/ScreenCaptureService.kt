@@ -1,0 +1,512 @@
+package com.example.subsnap.service
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.Image
+import android.media.ImageReader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.util.DisplayMetrics
+import android.util.Log
+import android.view.Display
+import android.view.WindowManager
+import android.widget.Toast
+import androidx.core.app.NotificationCompat
+import com.example.subsnap.MainActivity
+import com.example.subsnap.data.ScreenshotStorage
+import com.example.subsnap.data.SettingsRepository
+import com.example.subsnap.ocr.OcrSubtitleDetector
+import com.example.subsnap.overlay.OverlayManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
+import kotlin.random.Random
+
+class ScreenCaptureService : Service() {
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var autoCaptureJob: Job? = null
+
+    private var mediaProjection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+    private var backgroundThread: HandlerThread? = null
+    private var backgroundHandler: Handler? = null
+
+    private lateinit var screenshotStorage: ScreenshotStorage
+    private lateinit var settingsRepository: SettingsRepository
+    private val ocrDetector = OcrSubtitleDetector.getInstance()
+    private var overlayManager: OverlayManager? = null
+    private var displayManager: DisplayManager? = null
+
+    private var screenWidth = 1080
+    private var screenHeight = 1920
+    private var screenDensity = 420
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == Display.DEFAULT_DISPLAY) {
+                checkAndUpdateOrientation()
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        screenshotStorage = ScreenshotStorage.getInstance(this)
+        settingsRepository = SettingsRepository.getInstance(this)
+        displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        displayManager?.registerDisplayListener(displayListener, null)
+
+        startBackgroundThread()
+        initDisplayMetrics()
+        createNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_START -> {
+                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+                val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(EXTRA_RESULT_DATA)
+                }
+
+                if (resultCode != 0 && resultData != null) {
+                    startAsForeground()
+                    initMediaProjection(resultCode, resultData)
+                    setupOverlay()
+                    _serviceState.update { it.copy(isRunning = true, isAutoCapture = false) }
+                } else {
+                    stopSelf()
+                }
+            }
+            ACTION_STOP -> {
+                stopSelf()
+            }
+            ACTION_TRIGGER_CAPTURE -> {
+                captureAndSave()
+            }
+            ACTION_TOGGLE_AUTO -> {
+                toggleAutoCapture()
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    private fun startAsForeground() {
+        val notification = buildNotification(
+            title = "SubSnap: Захват экрана активен",
+            content = "Нажмите на плавающий виджет для создания снимка"
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun updateNotification(content: String) {
+        val notification = buildNotification(
+            title = "SubSnap: Захват экрана активен",
+            content = content
+        )
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun initDisplayMetrics() {
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val metrics = windowManager.currentWindowMetrics
+            screenWidth = metrics.bounds.width()
+            screenHeight = metrics.bounds.height()
+            screenDensity = resources.configuration.densityDpi
+        } else {
+            val displayMetrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(displayMetrics)
+            screenWidth = displayMetrics.widthPixels
+            screenHeight = displayMetrics.heightPixels
+            screenDensity = displayMetrics.densityDpi
+        }
+        Log.d(TAG, "Screen metrics initialized: ${screenWidth}x${screenHeight} @ ${screenDensity}dpi")
+    }
+
+    private fun checkAndUpdateOrientation() {
+        val prevWidth = screenWidth
+        val prevHeight = screenHeight
+        initDisplayMetrics()
+
+        if (prevWidth != screenWidth || prevHeight != screenHeight) {
+            Log.d(TAG, "Display orientation changed to ${screenWidth}x${screenHeight}. Rebuilding VirtualDisplay...")
+            serviceScope.launch(Dispatchers.Main) {
+                recreateVirtualDisplay()
+            }
+        }
+    }
+
+    private fun startBackgroundThread() {
+        backgroundThread = HandlerThread("ScreenCaptureBackground").apply {
+            start()
+            backgroundHandler = Handler(looper)
+        }
+    }
+
+    private fun stopBackgroundThread() {
+        backgroundThread?.quitSafely()
+        try {
+            backgroundThread?.join()
+        } catch (e: InterruptedException) {
+            Log.e(TAG, "Error stopping background thread", e)
+        }
+        backgroundThread = null
+        backgroundHandler = null
+    }
+
+    private fun initMediaProjection(resultCode: Int, resultData: Intent) {
+        val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
+
+        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+                Log.d(TAG, "MediaProjection stopped by system")
+                cleanupProjection()
+                stopSelf()
+            }
+        }, backgroundHandler)
+
+        createVirtualDisplay()
+    }
+
+    private fun createVirtualDisplay() {
+        if (mediaProjection == null) return
+
+        imageReader = ImageReader.newInstance(
+            screenWidth,
+            screenHeight,
+            PixelFormat.RGBA_8888,
+            2
+        )
+
+        virtualDisplay = mediaProjection?.createVirtualDisplay(
+            "SubSnapVirtualDisplay",
+            screenWidth,
+            screenHeight,
+            screenDensity,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader?.surface,
+            null,
+            backgroundHandler
+        )
+    }
+
+    private fun recreateVirtualDisplay() {
+        virtualDisplay?.release()
+        virtualDisplay = null
+        imageReader?.close()
+        imageReader = null
+
+        createVirtualDisplay()
+    }
+
+    fun captureAndSave(isAutoMode: Boolean = false, onFinished: ((Boolean) -> Unit)? = null) {
+        serviceScope.launch {
+            val bitmap = acquireLatestBitmap()
+            if (bitmap != null) {
+                val shouldFilter = isAutoMode && settingsRepository.filterEmptyScreenshots.value
+                if (shouldFilter) {
+                    val ocrResult = ocrDetector.detectSubtitles(bitmap)
+                    if (!ocrResult.hasSubtitles) {
+                        Log.d(TAG, "Auto-capture: No English subtitles detected in frame, skipping save.")
+                        bitmap.recycle()
+                        onFinished?.invoke(false)
+                        return@launch
+                    }
+                    Log.d(TAG, "Auto-capture: Subtitles detected (${ocrResult.englishWordCount} English words). Saving frame.")
+                }
+
+                triggerHapticFeedback()
+                screenshotStorage.saveScreenshot(bitmap)
+                bitmap.recycle()
+                overlayManager?.onCaptureSuccess()
+                _serviceState.update {
+                    it.copy(
+                        capturedCount = it.capturedCount + 1,
+                        lastCaptureTimestamp = System.currentTimeMillis()
+                    )
+                }
+                onFinished?.invoke(true)
+            } else {
+                if (!isAutoMode) {
+                    Toast.makeText(this@ScreenCaptureService, "Не удалось захватить кадр (попробуйте еще раз)", Toast.LENGTH_SHORT).show()
+                }
+                onFinished?.invoke(false)
+            }
+        }
+    }
+
+    private suspend fun acquireLatestBitmap(): Bitmap? = withContext(Dispatchers.Default) {
+        val reader = imageReader ?: return@withContext null
+        var image: Image? = null
+        var attempts = 0
+
+        // Retry loop to ensure a fresh image frame is available from VirtualDisplay
+        while (image == null && attempts < 5) {
+            image = reader.acquireLatestImage()
+            if (image == null) {
+                attempts++
+                delay(40)
+            }
+        }
+
+        if (image == null) return@withContext null
+
+        try {
+            val planes = image.planes
+            val buffer: ByteBuffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * screenWidth
+
+            if (rowPadding == 0) {
+                val bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
+                bitmap.copyPixelsFromBuffer(buffer)
+                bitmap
+            } else {
+                val rawBitmap = Bitmap.createBitmap(
+                    screenWidth + rowPadding / pixelStride,
+                    screenHeight,
+                    Bitmap.Config.ARGB_8888
+                )
+                rawBitmap.copyPixelsFromBuffer(buffer)
+                val croppedBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
+                rawBitmap.recycle()
+                croppedBitmap
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error acquiring bitmap from ImageReader", e)
+            null
+        } finally {
+            image.close()
+        }
+    }
+
+    private fun triggerHapticFeedback() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vibratorManager.defaultVibrator.vibrate(
+                    VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                @Suppress("DEPRECATION")
+                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+            }
+        } catch (e: Exception) {
+            // Ignore if vibration is restricted
+        }
+    }
+
+    fun toggleAutoCapture() {
+        val current = _serviceState.value.isAutoCapture
+        if (current) {
+            stopAutoCapture()
+        } else {
+            startAutoCapture()
+        }
+    }
+
+    private fun startAutoCapture() {
+        autoCaptureJob?.cancel()
+        _serviceState.update { it.copy(isAutoCapture = true) }
+        overlayManager?.updateAutoCaptureState(true)
+        updateNotification("Авто-захват включен (каждые 6–14 секунд)")
+
+        autoCaptureJob = serviceScope.launch {
+            while (_serviceState.value.isAutoCapture) {
+                val nextDelay = Random.nextLong(6000L, 14000L)
+                delay(nextDelay)
+                if (_serviceState.value.isAutoCapture) {
+                    captureAndSave(isAutoMode = true)
+                }
+            }
+        }
+    }
+
+    private fun stopAutoCapture() {
+        autoCaptureJob?.cancel()
+        autoCaptureJob = null
+        _serviceState.update { it.copy(isAutoCapture = false) }
+        overlayManager?.updateAutoCaptureState(false)
+        updateNotification("Авто-захват выключен. Ручной режим.")
+    }
+
+    private fun setupOverlay() {
+        overlayManager = OverlayManager(
+            context = this,
+            onCaptureClick = { captureAndSave() },
+            onToggleAutoClick = { toggleAutoCapture() },
+            onOpenAppClick = { openApp() },
+            onCloseClick = { stopSelf() }
+        ).apply {
+            show()
+        }
+    }
+
+    private fun openApp() {
+        val appIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        startActivity(appIntent)
+    }
+
+    private fun buildNotification(title: String, content: String): Notification {
+        val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            101,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
+        val appIntent = Intent(this, MainActivity::class.java)
+        val appPendingIntent = PendingIntent.getActivity(
+            this,
+            102,
+            appIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setContentIntent(appPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Остановить", stopPendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "SubSnap Screen Capture",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Уведомление активного захвата экрана для SubSnap"
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun cleanupProjection() {
+        virtualDisplay?.release()
+        virtualDisplay = null
+        imageReader?.close()
+        imageReader = null
+        mediaProjection?.stop()
+        mediaProjection = null
+    }
+
+    override fun onDestroy() {
+        displayManager?.unregisterDisplayListener(displayListener)
+        stopAutoCapture()
+        cleanupProjection()
+        stopBackgroundThread()
+        overlayManager?.dismiss()
+        overlayManager = null
+        ocrDetector.close()
+        serviceScope.cancel()
+        _serviceState.value = ServiceState(isRunning = false, isAutoCapture = false)
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    companion object {
+        private const val TAG = "ScreenCaptureService"
+        const val CHANNEL_ID = "subsnap_capture_channel"
+        const val NOTIFICATION_ID = 2026
+
+        const val ACTION_START = "com.example.subsnap.action.START"
+        const val ACTION_STOP = "com.example.subsnap.action.STOP"
+        const val ACTION_TRIGGER_CAPTURE = "com.example.subsnap.action.CAPTURE"
+        const val ACTION_TOGGLE_AUTO = "com.example.subsnap.action.TOGGLE_AUTO"
+
+        const val EXTRA_RESULT_CODE = "extra_result_code"
+        const val EXTRA_RESULT_DATA = "extra_result_data"
+
+        data class ServiceState(
+            val isRunning: Boolean = false,
+            val isAutoCapture: Boolean = false,
+            val capturedCount: Int = 0,
+            val lastCaptureTimestamp: Long = 0L
+        )
+
+        private val _serviceState = MutableStateFlow(ServiceState())
+        val serviceState: StateFlow<ServiceState> = _serviceState.asStateFlow()
+
+        fun start(context: Context, resultCode: Int, resultData: Intent) {
+            val intent = Intent(context, ScreenCaptureService::class.java).apply {
+                action = ACTION_START
+                putExtra(EXTRA_RESULT_CODE, resultCode)
+                putExtra(EXTRA_RESULT_DATA, resultData)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun stop(context: Context) {
+            val intent = Intent(context, ScreenCaptureService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+    }
+}
