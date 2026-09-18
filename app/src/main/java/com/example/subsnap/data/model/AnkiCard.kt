@@ -20,7 +20,13 @@ data class AnkiCard(
     val intervalDays: Int = 0,
     val easeFactor: Float = SpacedRepetition.DEFAULT_EASE_FACTOR,
     val nextReviewTimestamp: Long = 0L,
-    val lastReviewedTimestamp: Long = 0L
+    val lastReviewedTimestamp: Long = 0L,
+    val partOfSpeech: String = "",
+    val cefrLevel: String = "",
+    val clozeSentence: String = "",
+    val tags: List<String> = emptyList(),
+    val isFavorite: Boolean = false,
+    val userNotes: String = ""
 ) {
     val formattedDate: String
         get() {
@@ -33,6 +39,25 @@ data class AnkiCard(
 
     val isNew: Boolean
         get() = repetitions == 0 && lastReviewedTimestamp == 0L
+
+    val isMastered: Boolean
+        get() = intervalDays >= 21 || repetitions >= 4
+
+    val isLearning: Boolean
+        get() = !isNew && !isMastered
+
+    val computedClozeSentence: String
+        get() {
+            if (clozeSentence.isNotBlank()) return clozeSentence
+            val word = targetWord.trim()
+            if (word.isBlank()) return sentence
+            val idx = sentence.indexOf(word, ignoreCase = true)
+            return if (idx >= 0) {
+                sentence.substring(0, idx) + "[...]" + sentence.substring(idx + word.length)
+            } else {
+                sentence
+            }
+        }
 
     val intervalStatusText: String
         get() = when {
@@ -52,8 +77,8 @@ data class AnkiCard(
 
     /**
      * Generates a TSV row compatible with Anki import.
-     * Front: Sentence with bold target word + image
-     * Back: Word translation, transcription, sentence translation, explanation
+     * Front: Sentence (with cloze option) + bold target word + image
+     * Back: Word translation, transcription, sentence translation, context explanation, CEFR & tags
      */
     fun toAnkiTsvRow(): String {
         val cleanSentence = sentence.replace("\t", " ").replace("\n", " ")
@@ -62,10 +87,17 @@ data class AnkiCard(
         val cleanTargetWord = targetWord.replace("\t", " ").replace("\n", " ")
         val cleanTranscription = transcription.replace("\t", " ").replace("\n", " ")
         val cleanWordTranslation = wordTranslation.replace("\t", " ").replace("\n", " ")
+        val cleanNotes = userNotes.replace("\t", " ").replace("\n", " ")
         val imgTag = "<img src=\"${screenshotFile.name}\">"
 
+        val posBadge = if (partOfSpeech.isNotBlank()) " <small>[$partOfSpeech]</small>" else ""
+        val cefrBadge = if (cefrLevel.isNotBlank()) " <small>[$cefrLevel]</small>" else ""
+        val notesPart = if (cleanNotes.isNotBlank()) "<br><br><b>Заметки:</b> $cleanNotes" else ""
+        val tagsList = tags + (if (cefrLevel.isNotBlank()) listOf(cefrLevel) else emptyList())
+        val tagsPart = if (tagsList.isNotEmpty()) "<br><br><small>Теги: ${tagsList.joinToString(", ")}</small>" else ""
+
         val front = "$cleanSentence<br><br>$imgTag"
-        val back = "<b>$cleanTargetWord</b> <i>$cleanTranscription</i><br><b>Перевод:</b> $cleanWordTranslation<br><br><b>Предложение:</b> $cleanSentenceTrans<br><b>Контекст:</b> $cleanExplanation"
+        val back = "<b>$cleanTargetWord</b>$posBadge$cefrBadge <i>$cleanTranscription</i><br><b>Перевод:</b> $cleanWordTranslation<br><br><b>Предложение:</b> $cleanSentenceTrans<br><b>Контекст:</b> $cleanExplanation$notesPart$tagsPart"
 
         return "$front\t$back"
     }

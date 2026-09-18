@@ -5,6 +5,10 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class SettingsRepository(context: Context) {
 
@@ -56,9 +60,23 @@ class SettingsRepository(context: Context) {
     )
     val smartDetectionEnabled: StateFlow<Boolean> = _smartDetectionEnabled.asStateFlow()
 
+    private val _studyDailyGoal = MutableStateFlow(prefs.getInt(KEY_STUDY_DAILY_GOAL, 10))
+    val studyDailyGoal: StateFlow<Int> = _studyDailyGoal.asStateFlow()
+
+    private val _studyStreakDays = MutableStateFlow(prefs.getInt(KEY_STUDY_STREAK, 0))
+    val studyStreakDays: StateFlow<Int> = _studyStreakDays.asStateFlow()
+
+    private val _lastStudyDate = MutableStateFlow(prefs.getString(KEY_LAST_STUDY_DATE, "") ?: "")
+    val lastStudyDate: StateFlow<String> = _lastStudyDate.asStateFlow()
+
+    private val _autoPlayTts = MutableStateFlow(prefs.getBoolean(KEY_AUTO_PLAY_TTS, false))
+    val autoPlayTts: StateFlow<Boolean> = _autoPlayTts.asStateFlow()
+
+    private val _clozeStudyMode = MutableStateFlow(prefs.getBoolean(KEY_CLOZE_STUDY_MODE, false))
+    val clozeStudyMode: StateFlow<Boolean> = _clozeStudyMode.asStateFlow()
+
     private fun getSanitizedModel(): String {
         val saved = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
-        // Automatically migrate deprecated models (gemini-1.5, gemini-2.0, gemini-2.5, etc.) to gemini-3.8-flash
         if (saved.startsWith("gemini-1.") ||
             saved.startsWith("gemini-2.") ||
             saved !in AVAILABLE_MODELS
@@ -131,6 +149,51 @@ class SettingsRepository(context: Context) {
         _smartDetectionEnabled.value = enabled
     }
 
+    fun setStudyDailyGoal(goal: Int) {
+        val clamped = goal.coerceIn(5, 50)
+        prefs.edit().putInt(KEY_STUDY_DAILY_GOAL, clamped).apply()
+        _studyDailyGoal.value = clamped
+    }
+
+    fun setAutoPlayTts(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_PLAY_TTS, enabled).apply()
+        _autoPlayTts.value = enabled
+    }
+
+    fun setClozeStudyMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_CLOZE_STUDY_MODE, enabled).apply()
+        _clozeStudyMode.value = enabled
+    }
+
+    fun recordStudySessionComplete() {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val todayStr = sdf.format(Date())
+        val lastDateStr = _lastStudyDate.value
+
+        if (todayStr == lastDateStr) {
+            // Already counted today
+            return
+        }
+
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, -1)
+        val yesterdayStr = sdf.format(cal.time)
+
+        val newStreak = if (lastDateStr == yesterdayStr) {
+            _studyStreakDays.value + 1
+        } else {
+            1
+        }
+
+        prefs.edit()
+            .putInt(KEY_STUDY_STREAK, newStreak)
+            .putString(KEY_LAST_STUDY_DATE, todayStr)
+            .apply()
+
+        _studyStreakDays.value = newStreak
+        _lastStudyDate.value = todayStr
+    }
+
     val isConfigured: Boolean
         get() = _apiKey.value.isNotBlank()
 
@@ -146,10 +209,14 @@ class SettingsRepository(context: Context) {
         private const val KEY_AUTO_CAPTURE_INTERVAL = "auto_capture_interval_sec"
         private const val KEY_AUTO_START_CAPTURE = "auto_start_auto_capture"
         private const val KEY_SMART_DETECTION = "smart_subtitle_detection"
+        private const val KEY_STUDY_DAILY_GOAL = "study_daily_goal"
+        private const val KEY_STUDY_STREAK = "study_streak_days"
+        private const val KEY_LAST_STUDY_DATE = "study_last_date"
+        private const val KEY_AUTO_PLAY_TTS = "auto_play_tts"
+        private const val KEY_CLOZE_STUDY_MODE = "cloze_study_mode"
+
         const val DEFAULT_GITHUB_REPO = "DmKOwO/subsnap"
         const val DEFAULT_AUTO_CAPTURE_INTERVAL = 2.5f
-
-        // Updated for modern Gemini models in Google AI Studio
         const val DEFAULT_MODEL = "gemini-3.8-flash"
 
         val AVAILABLE_MODELS = listOf(

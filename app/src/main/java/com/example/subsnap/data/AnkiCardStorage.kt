@@ -43,6 +43,15 @@ class AnkiCardStorage(private val context: Context) {
                 val imgPath = obj.getString("imagePath")
                 val imgFile = File(imgPath)
 
+                val tagsList = mutableListOf<String>()
+                val tagsArr = obj.optJSONArray("tags")
+                if (tagsArr != null) {
+                    for (j in 0 until tagsArr.length()) {
+                        val t = tagsArr.optString(j, "").trim()
+                        if (t.isNotBlank()) tagsList.add(t)
+                    }
+                }
+
                 list.add(
                     AnkiCard(
                         id = obj.getString("id"),
@@ -58,7 +67,13 @@ class AnkiCardStorage(private val context: Context) {
                         intervalDays = obj.optInt("intervalDays", 0),
                         easeFactor = obj.optDouble("easeFactor", 2.5).toFloat(),
                         nextReviewTimestamp = obj.optLong("nextReviewTimestamp", 0L),
-                        lastReviewedTimestamp = obj.optLong("lastReviewedTimestamp", 0L)
+                        lastReviewedTimestamp = obj.optLong("lastReviewedTimestamp", 0L),
+                        partOfSpeech = obj.optString("partOfSpeech", ""),
+                        cefrLevel = obj.optString("cefrLevel", ""),
+                        clozeSentence = obj.optString("clozeSentence", ""),
+                        tags = tagsList,
+                        isFavorite = obj.optBoolean("isFavorite", false),
+                        userNotes = obj.optString("userNotes", "")
                     )
                 )
             }
@@ -78,6 +93,16 @@ class AnkiCardStorage(private val context: Context) {
             current.add(0, card)
         }
         persist(current)
+    }
+
+    suspend fun toggleFavorite(id: String): Unit = withContext(Dispatchers.IO) {
+        val current = _cards.value.toMutableList()
+        val idx = current.indexOfFirst { it.id == id }
+        if (idx >= 0) {
+            val old = current[idx]
+            current[idx] = old.copy(isFavorite = !old.isFavorite)
+            persist(current)
+        }
     }
 
     suspend fun deleteCard(id: String): Unit = withContext(Dispatchers.IO) {
@@ -108,6 +133,12 @@ class AnkiCardStorage(private val context: Context) {
                 put("easeFactor", card.easeFactor.toDouble())
                 put("nextReviewTimestamp", card.nextReviewTimestamp)
                 put("lastReviewedTimestamp", card.lastReviewedTimestamp)
+                put("partOfSpeech", card.partOfSpeech)
+                put("cefrLevel", card.cefrLevel)
+                put("clozeSentence", card.clozeSentence)
+                put("tags", JSONArray(card.tags))
+                put("isFavorite", card.isFavorite)
+                put("userNotes", card.userNotes)
             }
             jsonArray.put(obj)
         }
@@ -125,10 +156,81 @@ class AnkiCardStorage(private val context: Context) {
             writer.write("#html:true\n")
             writer.write("#tags column:3\n")
             for (card in _cards.value) {
-                writer.write(card.toAnkiTsvRow() + "\tSubSnap\n")
+                writer.write(card.toAnkiTsvRow() + "\n")
             }
         }
         exportFile
+    }
+
+    /**
+     * Exports a full JSON backup of the deck including all metadata and learning progress.
+     */
+    suspend fun exportBackupJson(): File = withContext(Dispatchers.IO) {
+        val backupFile = File(exportsDir, "subsnap_deck_backup_${System.currentTimeMillis()}.json")
+        val content = if (cardsFile.exists()) cardsFile.readText() else "[]"
+        backupFile.writeText(content)
+        backupFile
+    }
+
+    /**
+     * Restores/merges cards from a JSON backup. Returns count of imported cards.
+     */
+    suspend fun importBackupJson(jsonStr: String): Int = withContext(Dispatchers.IO) {
+        try {
+            val jsonArray = JSONArray(jsonStr)
+            val currentMap = _cards.value.associateBy { it.id }.toMutableMap()
+            var addedCount = 0
+
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val id = obj.optString("id", "imported_${UUID.randomUUID().toString().take(8)}")
+                val imgPath = obj.optString("imagePath", "")
+                val imgFile = File(imgPath)
+
+                val tagsList = mutableListOf<String>()
+                val tagsArr = obj.optJSONArray("tags")
+                if (tagsArr != null) {
+                    for (j in 0 until tagsArr.length()) {
+                        val t = tagsArr.optString(j, "").trim()
+                        if (t.isNotBlank()) tagsList.add(t)
+                    }
+                }
+
+                val card = AnkiCard(
+                    id = id,
+                    screenshotFile = imgFile,
+                    targetWord = obj.optString("targetWord", ""),
+                    transcription = obj.optString("transcription", ""),
+                    wordTranslation = obj.optString("wordTranslation", ""),
+                    sentence = obj.optString("sentence", ""),
+                    sentenceTranslation = obj.optString("sentenceTranslation", ""),
+                    explanation = obj.optString("explanation", ""),
+                    timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                    repetitions = obj.optInt("repetitions", 0),
+                    intervalDays = obj.optInt("intervalDays", 0),
+                    easeFactor = obj.optDouble("easeFactor", 2.5).toFloat(),
+                    nextReviewTimestamp = obj.optLong("nextReviewTimestamp", 0L),
+                    lastReviewedTimestamp = obj.optLong("lastReviewedTimestamp", 0L),
+                    partOfSpeech = obj.optString("partOfSpeech", ""),
+                    cefrLevel = obj.optString("cefrLevel", ""),
+                    clozeSentence = obj.optString("clozeSentence", ""),
+                    tags = tagsList,
+                    isFavorite = obj.optBoolean("isFavorite", false),
+                    userNotes = obj.optString("userNotes", "")
+                )
+
+                if (card.targetWord.isNotBlank() && card.sentence.isNotBlank()) {
+                    currentMap[id] = card
+                    addedCount++
+                }
+            }
+
+            persist(currentMap.values.sortedByDescending { it.timestamp })
+            addedCount
+        } catch (e: Exception) {
+            e.printStackTrace()
+            0
+        }
     }
 
     companion object {

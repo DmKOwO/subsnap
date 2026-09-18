@@ -113,4 +113,51 @@ class AnkiCardTest {
         val cleaned = com.example.subsnap.ai.GeminiApiClient.cleanJsonOutput(rawPure)
         assertEquals("{\"sentence\": \"Pure JSON\", \"target_word\": \"pure\"}", cleaned)
     }
+
+    @Test
+    fun computedClozeSentence_replacesTargetWordWithDeletionBlank() {
+        val card = AnkiCard(
+            id = "cloze_1",
+            screenshotFile = File("snap.webp"),
+            targetWord = "epiphany",
+            transcription = "",
+            wordTranslation = "озарение",
+            sentence = "She had a sudden epiphany while watching the sunset.",
+            sentenceTranslation = "",
+            explanation = ""
+        )
+        assertEquals("She had a sudden [...] while watching the sunset.", card.computedClozeSentence)
+
+        // Custom cloze sentence overrides automatic cloze
+        val customClozeCard = card.copy(clozeSentence = "She had an {{c1::epiphany}}.")
+        assertEquals("She had an {{c1::epiphany}}.", customClozeCard.computedClozeSentence)
+    }
+
+    @Test
+    fun isMastered_returnsTrueWhenRepetitionsAndIntervalAreHigh() {
+        val card = AnkiCard(
+            id = "mastered_1",
+            screenshotFile = File("snap.webp"),
+            targetWord = "tenacity",
+            transcription = "",
+            wordTranslation = "упорство",
+            sentence = "His tenacity paid off.",
+            sentenceTranslation = "",
+            explanation = "",
+            repetitions = 3,
+            intervalDays = 21
+        )
+        assertTrue(card.isMastered)
+
+        val beginnerCard = card.copy(repetitions = 2, intervalDays = 6)
+        org.junit.Assert.assertFalse(beginnerCard.isMastered)
+    }
+
+    @Test
+    fun cefrHelpers_correctlyIdentifiesLevelsAndLabels() {
+        assertEquals("B2 · Выше среднего", com.example.subsnap.ui.main.CefrHelpers.getCefrLabel("B2"))
+        assertEquals("A1 · Начальный", com.example.subsnap.ui.main.CefrHelpers.getCefrLabel("A1"))
+        assertEquals("C2 · Владение в совершенстве", com.example.subsnap.ui.main.CefrHelpers.getCefrLabel("C2"))
+    }
 }
+

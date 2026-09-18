@@ -9,6 +9,7 @@ import com.example.subsnap.data.AnkiCardStorage
 import com.example.subsnap.data.CapturedScreenshot
 import com.example.subsnap.data.ScreenshotStorage
 import com.example.subsnap.data.SettingsRepository
+import com.example.subsnap.data.SpacedRepetition
 import com.example.subsnap.data.model.AnkiCard
 import com.example.subsnap.ocr.OcrSubtitleDetector
 import com.example.subsnap.ota.AppReleaseRecord
@@ -24,6 +25,24 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Calendar
+
+enum class CardFilterType(val title: String) {
+    ALL("Все"),
+    DUE("К повторению"),
+    FAVORITES("⭐ Избранное"),
+    NEW("Новые"),
+    MASTERED("🏆 Усвоено"),
+    CEFR_A("A1-A2"),
+    CEFR_B("B1-B2"),
+    CEFR_C("C1-C2")
+}
+
+enum class CardSortOrder(val title: String) {
+    NEWEST("Сначала новые"),
+    OLDEST("Сначала старые"),
+    ALPHABETICAL("По слову (A-Z)"),
+    DUE_DATE("По сроку повторения")
+}
 
 class MainScreenViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -54,30 +73,74 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     val autoStartAutoCapture: StateFlow<Boolean> = settingsRepository.autoStartAutoCapture
     val smartDetectionEnabled: StateFlow<Boolean> = settingsRepository.smartDetectionEnabled
 
+    val studyDailyGoal: StateFlow<Int> = settingsRepository.studyDailyGoal
+    val studyStreakDays: StateFlow<Int> = settingsRepository.studyStreakDays
+    val autoPlayTts: StateFlow<Boolean> = settingsRepository.autoPlayTts
+    val clozeStudyMode: StateFlow<Boolean> = settingsRepository.clozeStudyMode
+
     private val _releasesHistory = MutableStateFlow<List<AppReleaseRecord>>(emptyList())
     val releasesHistory: StateFlow<List<AppReleaseRecord>> = _releasesHistory.asStateFlow()
 
     private val _versionDiff = MutableStateFlow<VersionDiff?>(null)
     val versionDiff: StateFlow<VersionDiff?> = _versionDiff.asStateFlow()
 
-    private val _isLoadingHistory = MutableStateFlow(false)
+    private val _isLoadingHistory = MutableFlowFalse()
+    private fun MutableFlowFalse() = MutableStateFlow(false)
     val isLoadingHistory: StateFlow<Boolean> = _isLoadingHistory.asStateFlow()
 
     private val _cardSearchQuery = MutableStateFlow("")
     val cardSearchQuery: StateFlow<String> = _cardSearchQuery.asStateFlow()
 
-    val filteredCards: StateFlow<List<AnkiCard>> = combine(cards, _cardSearchQuery) { list, query ->
-        if (query.isBlank()) {
-            list
-        } else {
+    private val _cardFilter = MutableStateFlow(CardFilterType.ALL)
+    val cardFilter: StateFlow<CardFilterType> = _cardFilter.asStateFlow()
+
+    private val _cardSortOrder = MutableStateFlow(CardSortOrder.NEWEST)
+    val cardSortOrder: StateFlow<CardSortOrder> = _cardSortOrder.asStateFlow()
+
+    val filteredCards: StateFlow<List<AnkiCard>> = combine(
+        cards,
+        _cardSearchQuery,
+        _cardFilter,
+        _cardSortOrder
+    ) { list, query, filter, sort ->
+        var res = list
+
+        // 1. Text Search
+        if (query.isNotBlank()) {
             val q = query.trim().lowercase()
-            list.filter { card ->
+            res = res.filter { card ->
                 card.targetWord.lowercase().contains(q) ||
                 card.wordTranslation.lowercase().contains(q) ||
                 card.sentence.lowercase().contains(q) ||
                 card.sentenceTranslation.lowercase().contains(q) ||
-                card.explanation.lowercase().contains(q)
+                card.explanation.lowercase().contains(q) ||
+                card.userNotes.lowercase().contains(q) ||
+                card.tags.any { it.lowercase().contains(q) } ||
+                card.partOfSpeech.lowercase().contains(q)
             }
+        }
+
+        // 2. Filter
+        res = when (filter) {
+            CardFilterType.ALL -> res
+            CardFilterType.DUE -> res.filter { it.isDue }
+            CardFilterType.FAVORITES -> res.filter { it.isFavorite }
+            CardFilterType.NEW -> res.filter { it.isNew }
+            CardFilterType.MASTERED -> res.filter { it.isMastered }
+            CardFilterType.CEFR_A -> res.filter { it.cefrLevel in listOf("A1", "A2") }
+            CardFilterType.CEFR_B -> res.filter { it.cefrLevel in listOf("B1", "B2") }
+            CardFilterType.CEFR_C -> res.filter { it.cefrLevel in listOf("C1", "C2") }
+        }
+
+        // 3. Sort
+        when (sort) {
+            CardSortOrder.NEWEST -> res.sortedByDescending { it.timestamp }
+            CardSortOrder.OLDEST -> res.sortedBy { it.timestamp }
+            CardSortOrder.ALPHABETICAL -> res.sortedBy { it.targetWord.lowercase() }
+            CardSortOrder.DUE_DATE -> res.sortedWith(
+                compareBy<AnkiCard> { !it.isDue }
+                    .thenBy { it.nextReviewTimestamp }
+            )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -90,6 +153,28 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         val startOfDay = getStartOfDayMillis()
         list.count { it.timestamp >= startOfDay }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val dueCardsCount: StateFlow<Int> = cards.map { list ->
+        list.count { it.isDue }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val masteredCardsCount: StateFlow<Int> = cards.map { list ->
+        list.count { it.isMastered }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val favoriteCardsCount: StateFlow<Int> = cards.map { list ->
+        list.count { it.isFavorite }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val retentionRatePercent: StateFlow<Int> = cards.map { list ->
+        val reviewed = list.filter { !it.isNew }
+        if (reviewed.isEmpty()) {
+            100
+        } else {
+            val goodOrEasy = reviewed.count { it.easeFactor >= 2.4f && it.intervalDays > 1 }
+            ((goodOrEasy.toFloat() / reviewed.size.toFloat()) * 100f).toInt().coerceIn(0, 100)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 100)
 
     private val _updateInfo = MutableStateFlow<com.example.subsnap.ota.AppUpdateInfo?>(null)
     val updateInfo: StateFlow<com.example.subsnap.ota.AppUpdateInfo?> = _updateInfo.asStateFlow()
@@ -156,6 +241,24 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun toggleCardFavorite(id: String) {
+        viewModelScope.launch {
+            ankiCardStorage.toggleFavorite(id)
+        }
+    }
+
+    fun setCardFilter(filter: CardFilterType) {
+        _cardFilter.value = filter
+    }
+
+    fun setCardSortOrder(sort: CardSortOrder) {
+        _cardSortOrder.value = sort
+    }
+
+    fun triggerCaptureNow() {
+        ScreenCaptureService.triggerCapture(getApplication())
+    }
+
     fun analyzeScreenshot(screenshot: CapturedScreenshot, forceSend: Boolean = false) {
         viewModelScope.launch {
             _isAnalyzing.value = true
@@ -216,6 +319,24 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
             val file = ankiCardStorage.exportToAnkiFile()
             onExported(file)
         }
+    }
+
+    fun exportBackupJson(onExported: (File) -> Unit) {
+        viewModelScope.launch {
+            val file = ankiCardStorage.exportBackupJson()
+            onExported(file)
+        }
+    }
+
+    fun importBackupJson(jsonStr: String, onFinished: (Int) -> Unit) {
+        viewModelScope.launch {
+            val count = ankiCardStorage.importBackupJson(jsonStr)
+            onFinished(count)
+        }
+    }
+
+    fun recordStudySessionComplete() {
+        settingsRepository.recordStudySessionComplete()
     }
 
     fun checkForUpdates(userInitiated: Boolean = false) {
@@ -298,6 +419,18 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setSmartDetectionEnabled(enabled: Boolean) {
         settingsRepository.setSmartDetectionEnabled(enabled)
+    }
+
+    fun setStudyDailyGoal(goal: Int) {
+        settingsRepository.setStudyDailyGoal(goal)
+    }
+
+    fun setAutoPlayTts(enabled: Boolean) {
+        settingsRepository.setAutoPlayTts(enabled)
+    }
+
+    fun setClozeStudyMode(enabled: Boolean) {
+        settingsRepository.setClozeStudyMode(enabled)
     }
 
     fun toggleAutoCapture() {

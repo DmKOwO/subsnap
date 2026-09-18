@@ -2,13 +2,12 @@ package com.example.subsnap.ui.study
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.activity.BackEventCompat
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,28 +31,39 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -76,6 +86,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.subsnap.data.ReviewRating
 import com.example.subsnap.data.SpacedRepetition
 import com.example.subsnap.data.model.AnkiCard
@@ -90,6 +101,8 @@ fun StudyScreen(
     allCards: List<AnkiCard>,
     onCardUpdated: (AnkiCard) -> Unit,
     onBack: () -> Unit,
+    studyStreakDays: Int = 0,
+    onSessionCompleted: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BackHandler(enabled = true) {
@@ -99,7 +112,7 @@ fun StudyScreen(
     val context = LocalContext.current
     val ttsHelper = remember { TtsHelper.getInstance(context) }
 
-    // Session queue (initialized once per session)
+    // Session queue
     val studyQueue = remember {
         val due = SpacedRepetition.getDueCards(allCards)
         val initialList = if (due.isNotEmpty()) due else allCards
@@ -115,35 +128,83 @@ fun StudyScreen(
     var goodCount by remember { mutableIntStateOf(0) }
     var easyCount by remember { mutableIntStateOf(0) }
 
+    // In-session preferences
+    var isClozeMode by remember { mutableStateOf(false) }
+    var ttsSpeed by remember { mutableFloatStateOf(1.0f) }
+    var editingCard by remember { mutableStateOf<AnkiCard?>(null) }
+
     // 3D Flip animation
     val rotation by animateFloatAsState(
         targetValue = if (isFlipped) 180f else 0f,
-        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
         label = "CardFlipAnimation"
     )
+
+    val currentCard = studyQueue.getOrNull(currentIndex)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = "Интервальное повторение",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (!sessionCompleted && studyQueue.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
                             Text(
-                                text = "Карточка ${currentIndex + 1} из ${studyQueue.size}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = "Интервальное повторение",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                             )
+                            if (!sessionCompleted && studyQueue.isNotEmpty()) {
+                                Text(
+                                    text = "Карточка ${currentIndex + 1} из ${studyQueue.size}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        // Streak chip
+                        if (studyStreakDays > 0) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFF97316).copy(alpha = 0.15f),
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.LocalFireDepartment,
+                                        contentDescription = null,
+                                        tint = Color(0xFFF97316),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "$studyStreakDays дн.",
+                                        color = Color(0xFFEA580C),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                },
+                actions = {
+                    if (!sessionCompleted && currentCard != null) {
+                        IconButton(onClick = { editingCard = currentCard }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Редактировать карточку", modifier = Modifier.size(20.dp))
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -161,12 +222,16 @@ fun StudyScreen(
             if (studyQueue.isEmpty()) {
                 EmptyDeckStudyPlaceholder(onBack = onBack)
             } else if (sessionCompleted) {
+                LaunchedEffect(Unit) {
+                    onSessionCompleted()
+                }
                 StudyCompletedScreen(
                     totalReviewed = reviewedCount,
                     againCount = againCount,
                     hardCount = hardCount,
                     goodCount = goodCount,
                     easyCount = easyCount,
+                    streakDays = studyStreakDays,
                     onRestart = {
                         studyQueue.clear()
                         studyQueue.addAll(allCards)
@@ -182,7 +247,6 @@ fun StudyScreen(
                     onBack = onBack
                 )
             } else {
-                val currentCard = studyQueue.getOrNull(currentIndex)
                 if (currentCard == null) {
                     sessionCompleted = true
                     return@Column
@@ -190,14 +254,72 @@ fun StudyScreen(
 
                 // Progress Bar
                 LinearProgressIndicator(
-                    progress = { (currentIndex.toFloat() / studyQueue.size.toFloat()).coerceIn(0f, 1f) },
+                    progress = { ((currentIndex + 1).toFloat() / studyQueue.size.toFloat()).coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                // Sub-header controls: Cloze Mode toggle & TTS speed pills
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Cloze Mode FilterChip
+                    FilterChip(
+                        selected = isClozeMode,
+                        onClick = { isClozeMode = !isClozeMode },
+                        label = {
+                            Text(
+                                text = if (isClozeMode) "Cloze: [...] скрыто" else "Обычный текст",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (isClozeMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    )
+
+                    // TTS Speed quick selector
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Speed,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        listOf(0.8f, 1.0f, 1.2f).forEach { speed ->
+                            val isSel = ttsSpeed == speed
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                modifier = Modifier
+                                    .padding(horizontal = 2.dp)
+                                    .clickable { ttsSpeed = speed }
+                            ) {
+                                Text(
+                                    text = "${speed}x",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSel) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
 
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     // Flip Flashcard with 3D perspective
@@ -218,10 +340,16 @@ fun StudyScreen(
                             // FRONT SIDE
                             CardFront(
                                 card = currentCard,
-                                onTtsClick = { ttsHelper.speak(currentCard.sentence) }
+                                isClozeMode = isClozeMode,
+                                onTtsClick = { ttsHelper.speak(currentCard.sentence, ttsSpeed) },
+                                onToggleFavorite = {
+                                    val updated = currentCard.copy(isFavorite = !currentCard.isFavorite)
+                                    onCardUpdated(updated)
+                                    studyQueue[currentIndex] = updated
+                                }
                             )
                         } else {
-                            // BACK SIDE (mirrored so text reads normally)
+                            // BACK SIDE
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -229,14 +357,19 @@ fun StudyScreen(
                             ) {
                                 CardBack(
                                     card = currentCard,
-                                    onTtsWordClick = { ttsHelper.speak(currentCard.targetWord) },
-                                    onTtsSentenceClick = { ttsHelper.speak(currentCard.sentence) }
+                                    onTtsWordClick = { ttsHelper.speak(currentCard.targetWord, ttsSpeed) },
+                                    onTtsSentenceClick = { ttsHelper.speak(currentCard.sentence, ttsSpeed) },
+                                    onToggleFavorite = {
+                                        val updated = currentCard.copy(isFavorite = !currentCard.isFavorite)
+                                        onCardUpdated(updated)
+                                        studyQueue[currentIndex] = updated
+                                    }
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Buttons below card
                     if (!isFlipped) {
@@ -263,7 +396,6 @@ fun StudyScreen(
                                 when (rating) {
                                     ReviewRating.AGAIN -> {
                                         againCount++
-                                        // Re-queue card in current session to review again
                                         studyQueue.add(updated)
                                     }
                                     ReviewRating.HARD -> hardCount++
@@ -280,16 +412,32 @@ fun StudyScreen(
                             }
                         )
                     }
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
             }
         }
+    }
+
+    // In-study Card Edit Dialog
+    editingCard?.let { card ->
+        InStudyCardEditDialog(
+            card = card,
+            onSave = { updated ->
+                onCardUpdated(updated)
+                studyQueue[currentIndex] = updated
+                editingCard = null
+            },
+            onDismiss = { editingCard = null }
+        )
     }
 }
 
 @Composable
 fun CardFront(
     card: AnkiCard,
-    onTtsClick: () -> Unit
+    isClozeMode: Boolean,
+    onTtsClick: () -> Unit,
+    onToggleFavorite: () -> Unit
 ) {
     val bitmap = rememberCardBitmap(card.screenshotFile)
 
@@ -307,11 +455,60 @@ fun CardFront(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
+            // Header with CEFR and Favorite Star
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (card.cefrLevel.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = card.cefrLevel,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (card.partOfSpeech.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = card.partOfSpeech,
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                IconButton(onClick = onToggleFavorite, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        if (card.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                        contentDescription = "Избранное",
+                        tint = if (card.isFavorite) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             // Screenshot Image
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
+                    .height(180.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.Black),
                 contentAlignment = Alignment.Center
@@ -326,45 +523,74 @@ fun CardFront(
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Highlighted Target Word in Sentence
-            val annotatedSentence = buildAnnotatedString {
-                val full = card.sentence
-                val target = card.targetWord.trim()
-                val idx = if (target.isNotBlank()) full.indexOf(target, ignoreCase = true) else -1
-
-                if (idx >= 0) {
-                    append(full.substring(0, idx))
-                    withStyle(
-                        SpanStyle(
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp
-                        )
-                    ) {
-                        append(full.substring(idx, idx + target.length))
+            // Target Sentence with Cloze or Word Highlight
+            if (isClozeMode) {
+                val clozeText = card.computedClozeSentence
+                val annotatedCloze = buildAnnotatedString {
+                    val blank = "[...]"
+                    val idx = clozeText.indexOf(blank)
+                    if (idx >= 0) {
+                        append(clozeText.substring(0, idx))
+                        withStyle(
+                            SpanStyle(
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 22.sp
+                            )
+                        ) {
+                            append(blank)
+                        }
+                        append(clozeText.substring(idx + blank.length))
+                    } else {
+                        append(clozeText)
                     }
-                    append(full.substring(idx + target.length))
-                } else {
-                    append(full)
                 }
+                Text(
+                    text = annotatedCloze,
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+            } else {
+                val annotatedSentence = buildAnnotatedString {
+                    val full = card.sentence
+                    val target = card.targetWord.trim()
+                    val idx = if (target.isNotBlank()) full.indexOf(target, ignoreCase = true) else -1
+
+                    if (idx >= 0) {
+                        append(full.substring(0, idx))
+                        withStyle(
+                            SpanStyle(
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp
+                            )
+                        ) {
+                            append(full.substring(idx, idx + target.length))
+                        }
+                        append(full.substring(idx + target.length))
+                    } else {
+                        append(full)
+                    }
+                }
+
+                Text(
+                    text = annotatedSentence,
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
             }
 
-            Text(
-                text = annotatedSentence,
-                style = MaterialTheme.typography.titleLarge,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 8.dp)
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Audio button
             IconButton(
                 onClick = onTtsClick,
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(46.dp)
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
             ) {
                 Icon(
@@ -374,11 +600,11 @@ fun CardFront(
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(bottom = 6.dp)
             ) {
                 Icon(
                     Icons.Default.TouchApp,
@@ -401,7 +627,8 @@ fun CardFront(
 fun CardBack(
     card: AnkiCard,
     onTtsWordClick: () -> Unit,
-    onTtsSentenceClick: () -> Unit
+    onTtsSentenceClick: () -> Unit,
+    onToggleFavorite: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxSize(),
@@ -412,10 +639,59 @@ fun CardBack(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(20.dp)
+                .padding(18.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Header with Favorite Star
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (card.cefrLevel.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = card.cefrLevel,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (card.partOfSpeech.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = card.partOfSpeech,
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                IconButton(onClick = onToggleFavorite, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        if (card.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                        contentDescription = "Избранное",
+                        tint = if (card.isFavorite) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
             // Target Word Header
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -453,9 +729,9 @@ fun CardBack(
                 )
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Target Word Russian Translation
+            // Russian Translation
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
@@ -471,7 +747,7 @@ fun CardBack(
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Original Sentence + Translation
             Surface(
@@ -512,7 +788,7 @@ fun CardBack(
             }
 
             if (card.explanation.isNotBlank()) {
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -534,6 +810,30 @@ fun CardBack(
                     }
                 }
             }
+
+            if (card.userNotes.isNotBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFFEF3C7),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "📝 Мои заметки:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFB45309)
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = card.userNotes,
+                            fontSize = 13.sp,
+                            color = Color(0xFF78350F)
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -547,7 +847,6 @@ fun RatingButtonsRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Again
         RatingButtonItem(
             title = "Снова",
             subtitle = SpacedRepetition.formatIntervalPreview(card, ReviewRating.AGAIN),
@@ -557,7 +856,6 @@ fun RatingButtonsRow(
             onClick = { onRatingSelected(ReviewRating.AGAIN) }
         )
 
-        // Hard
         RatingButtonItem(
             title = "Трудно",
             subtitle = SpacedRepetition.formatIntervalPreview(card, ReviewRating.HARD),
@@ -567,7 +865,6 @@ fun RatingButtonsRow(
             onClick = { onRatingSelected(ReviewRating.HARD) }
         )
 
-        // Good
         RatingButtonItem(
             title = "Хорошо",
             subtitle = SpacedRepetition.formatIntervalPreview(card, ReviewRating.GOOD),
@@ -577,7 +874,6 @@ fun RatingButtonsRow(
             onClick = { onRatingSelected(ReviewRating.GOOD) }
         )
 
-        // Easy
         RatingButtonItem(
             title = "Легко",
             subtitle = SpacedRepetition.formatIntervalPreview(card, ReviewRating.EASY),
@@ -619,6 +915,7 @@ fun StudyCompletedScreen(
     hardCount: Int,
     goodCount: Int,
     easyCount: Int,
+    streakDays: Int,
     onRestart: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -647,16 +944,35 @@ fun StudyCompletedScreen(
                 fontWeight = FontWeight.Bold
             )
 
+            if (streakDays > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.LocalFireDepartment,
+                        contentDescription = null,
+                        tint = Color(0xFFF97316),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Ударный режим: $streakDays дн. подряд!",
+                        color = Color(0xFFEA580C),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Отличная работа! Карточки распределены по интервалам памяти.",
+                text = "Отличная работа! Карточки распределены по интервалам SuperMemo SM-2.",
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 15.sp
+                fontSize = 14.sp
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -672,7 +988,7 @@ fun StudyCompletedScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             Button(
                 onClick = onBack,
@@ -686,7 +1002,7 @@ fun StudyCompletedScreen(
                 Text("Вернуться к колоде", fontWeight = FontWeight.Bold)
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             OutlinedButton(
                 onClick = onRestart,
@@ -746,6 +1062,103 @@ fun EmptyDeckStudyPlaceholder(onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
             Button(onClick = onBack) {
                 Text("Назад к приложению")
+            }
+        }
+    }
+}
+
+@Composable
+fun InStudyCardEditDialog(
+    card: AnkiCard,
+    onSave: (AnkiCard) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var word by remember { mutableStateOf(card.targetWord) }
+    var translation by remember { mutableStateOf(card.wordTranslation) }
+    var sentence by remember { mutableStateOf(card.sentence) }
+    var sentenceTranslation by remember { mutableStateOf(card.sentenceTranslation) }
+    var userNotes by remember { mutableStateOf(card.userNotes) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = "Редактировать карточку",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = word,
+                    onValueChange = { word = it },
+                    label = { Text("Слово") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = translation,
+                    onValueChange = { translation = it },
+                    label = { Text("Перевод") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = sentence,
+                    onValueChange = { sentence = it },
+                    label = { Text("Предложение") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = sentenceTranslation,
+                    onValueChange = { sentenceTranslation = it },
+                    label = { Text("Перевод предложения") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = userNotes,
+                    onValueChange = { userNotes = it },
+                    label = { Text("Мои заметки / Мнемоника") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Отмена")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = {
+                        onSave(
+                            card.copy(
+                                targetWord = word.trim(),
+                                wordTranslation = translation.trim(),
+                                sentence = sentence.trim(),
+                                sentenceTranslation = sentenceTranslation.trim(),
+                                userNotes = userNotes.trim()
+                            )
+                        )
+                    }) {
+                        Text("Сохранить")
+                    }
+                }
             }
         }
     }

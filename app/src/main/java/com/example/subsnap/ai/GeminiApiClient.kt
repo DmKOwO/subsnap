@@ -48,17 +48,21 @@ class GeminiApiClient(private val context: Context) {
                 "\n[On-device OCR Subtitle Hint]:\n\"$ocrHint\"\nUse this detected text as helpful context for identifying the exact subtitle sentence.\n"
             } else ""
 
-            // Construct payload
+            // Construct payload with rich sentence mining fields
             val promptText = """
-                You are an expert English language teacher helping a student memorize vocabulary using Anki.
+                You are an expert English language teacher helping a student memorize vocabulary using Anki sentence mining.
                 Analyze this screenshot taken while watching a movie/video, reading, or gaming.$ocrContextBlock
                 1. Locate the English subtitles, dialogue, or visible speech text.
                 2. Extract the complete English sentence.
-                3. Choose the most useful or challenging English vocabulary word or idiom from the sentence.
+                3. Choose the most useful or challenging English vocabulary word, idiom, or phrasal verb from the sentence.
                 4. Provide the IPA phonetic transcription for that target word.
                 5. Provide a natural Russian translation for the target word.
                 6. Provide a natural Russian translation of the full sentence.
                 7. Provide a concise Russian explanation of how the word works in this context.
+                8. Specify the grammatical Part of Speech (Noun, Verb, Adjective, Adverb, Idiom, Phrasal Verb).
+                9. Estimate the CEFR difficulty level (A1, A2, B1, B2, C1, or C2).
+                10. Create a Cloze deletion sentence where the target word or phrase is replaced with "[...]".
+                11. Provide 1 to 3 relevant tags (e.g. "idiom", "phrasal_verb", "slang", "daily_life", "business").
 
                 Return ONLY a JSON object matching this schema:
                 {
@@ -67,7 +71,11 @@ class GeminiApiClient(private val context: Context) {
                   "transcription": "[...]",
                   "word_translation": "...",
                   "sentence_translation": "...",
-                  "explanation": "..."
+                  "explanation": "...",
+                  "part_of_speech": "...",
+                  "cefr_level": "...",
+                  "cloze_sentence": "...",
+                  "tags": ["..."]
                 }
                 If absolutely no English text or subtitles are found in the image, return:
                 {
@@ -76,7 +84,11 @@ class GeminiApiClient(private val context: Context) {
                   "transcription": "",
                   "word_translation": "Текст субтитров не обнаружен",
                   "sentence_translation": "На кадре нет субтитров",
-                  "explanation": "Попробуйте захватить другой момент видео"
+                  "explanation": "Попробуйте захватить другой момент видео",
+                  "part_of_speech": "",
+                  "cefr_level": "",
+                  "cloze_sentence": "",
+                  "tags": []
                 }
             """.trimIndent()
 
@@ -86,7 +98,7 @@ class GeminiApiClient(private val context: Context) {
                         val partsArray = JSONArray().apply {
                             // Text prompt
                             put(JSONObject().apply { put("text", promptText) })
-                            // Image data (Gemini 3.x format)
+                            // Image data (Gemini format)
                             put(JSONObject().apply {
                                 val inlineData = JSONObject().apply {
                                     put("mimeType", mimeType)
@@ -176,6 +188,15 @@ class GeminiApiClient(private val context: Context) {
                 )
             }
 
+            val tagsList = mutableListOf<String>()
+            val tagsArr = cardJson.optJSONArray("tags")
+            if (tagsArr != null) {
+                for (i in 0 until tagsArr.length()) {
+                    val tag = tagsArr.optString(i, "").trim()
+                    if (tag.isNotBlank()) tagsList.add(tag)
+                }
+            }
+
             val card = AnkiCard(
                 id = "card_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}",
                 screenshotFile = screenshotFile,
@@ -185,6 +206,10 @@ class GeminiApiClient(private val context: Context) {
                 wordTranslation = cardJson.optString("word_translation", "").trim(),
                 sentenceTranslation = cardJson.optString("sentence_translation", "").trim(),
                 explanation = cardJson.optString("explanation", "").trim(),
+                partOfSpeech = cardJson.optString("part_of_speech", "").trim(),
+                cefrLevel = cardJson.optString("cefr_level", "").trim().uppercase(),
+                clozeSentence = cardJson.optString("cloze_sentence", "").trim(),
+                tags = tagsList,
                 timestamp = System.currentTimeMillis()
             )
 

@@ -358,6 +358,9 @@ class ScreenCaptureService : Service() {
         bitmap.recycle()
         withContext(Dispatchers.Main) {
             overlayManager?.onCaptureSuccess()
+            if (!isAutoMode) {
+                Toast.makeText(this@ScreenCaptureService, "📸 Снимок сохранен в SubSnap!", Toast.LENGTH_SHORT).show()
+            }
         }
         _serviceState.update {
             it.copy(
@@ -622,11 +625,22 @@ class ScreenCaptureService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
+        val captureIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = ACTION_TRIGGER_CAPTURE
+        }
+        val capturePendingIntent = PendingIntent.getService(
+            this,
+            103,
+            captureIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentIntent(appPendingIntent)
+            .addAction(android.R.drawable.ic_menu_camera, "📸 Снимок", capturePendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Остановить", stopPendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -730,6 +744,13 @@ class ScreenCaptureService : Service() {
         fun setAuto(context: Context, enabled: Boolean) {
             val intent = Intent(context, ScreenCaptureService::class.java).apply {
                 action = if (enabled) ACTION_START_AUTO else ACTION_STOP_AUTO
+            }
+            context.startService(intent)
+        }
+
+        fun triggerCapture(context: Context) {
+            val intent = Intent(context, ScreenCaptureService::class.java).apply {
+                action = ACTION_TRIGGER_CAPTURE
             }
             context.startService(intent)
         }
