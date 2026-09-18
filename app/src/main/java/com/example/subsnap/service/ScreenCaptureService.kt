@@ -335,10 +335,14 @@ class ScreenCaptureService : Service() {
                 vibratorManager.defaultVibrator.vibrate(
                     VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
                 )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 @Suppress("DEPRECATION")
                 val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
                 vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                @Suppress("DEPRECATION")
+                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
             }
         } catch (e: Exception) {
             // Ignore if vibration is restricted
