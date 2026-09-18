@@ -12,6 +12,7 @@ import com.example.subsnap.data.model.AnkiCard
 import com.example.subsnap.service.ScreenCaptureService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import com.example.subsnap.ocr.OcrSubtitleDetector
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
@@ -22,6 +23,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val ankiCardStorage = AnkiCardStorage.getInstance(application)
     private val settingsRepository = SettingsRepository.getInstance(application)
     private val geminiClient = GeminiApiClient.getInstance(application)
+    private val ocrDetector = OcrSubtitleDetector.getInstance()
 
     val screenshots: StateFlow<List<CapturedScreenshot>> = screenshotStorage.screenshots
     val cards: StateFlow<List<AnkiCard>> = ankiCardStorage.cards
@@ -36,6 +38,9 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _analysisError = MutableStateFlow<String?>(null)
     val analysisError: StateFlow<String?> = _analysisError.asStateFlow()
+
+    private val _lastFailedScreenshot = MutableStateFlow<CapturedScreenshot?>(null)
+    val lastFailedScreenshot: StateFlow<CapturedScreenshot?> = _lastFailedScreenshot.asStateFlow()
 
     private val _generatedCard = MutableStateFlow<AnkiCard?>(null)
     val generatedCard: StateFlow<AnkiCard?> = _generatedCard.asStateFlow()
@@ -74,15 +79,28 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun analyzeScreenshot(screenshot: CapturedScreenshot) {
+    fun analyzeScreenshot(screenshot: CapturedScreenshot, forceSend: Boolean = false) {
         viewModelScope.launch {
             _isAnalyzing.value = true
             _analysisError.value = null
+            _lastFailedScreenshot.value = screenshot
             _generatedCard.value = null
 
-            val result = geminiClient.analyzeScreenshot(screenshot.file)
+            // 1. On-device ML Kit OCR subtitle detection before sending frame to cloud
+            val ocrResult = ocrDetector.detectSubtitles(screenshot.file)
+            if (!forceSend && !ocrResult.hasSubtitles && settingsRepository.filterEmptyScreenshots.value) {
+                _isAnalyzing.value = false
+                _analysisError.value = "ML Kit OCR: на кадре не обнаружены английские субтитры или речь. Нажмите «Всё равно отправить», если субтитры на кадре есть, или выберите другой кадр."
+                return@launch
+            }
+
+            val result = geminiClient.analyzeScreenshot(
+                screenshotFile = screenshot.file,
+                ocrHint = ocrResult.detectedText.ifBlank { null }
+            )
             result.onSuccess { card ->
                 _generatedCard.value = card
+                _lastFailedScreenshot.value = null
             }.onFailure { err ->
                 _analysisError.value = err.message ?: "Ошибка при обращении к ИИ"
             }
@@ -94,6 +112,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     fun dismissGeneratedCard() {
         _generatedCard.value = null
         _analysisError.value = null
+        _lastFailedScreenshot.value = null
     }
 
     fun saveGeneratedCard(card: AnkiCard) {

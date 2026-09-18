@@ -24,8 +24,15 @@ data class SubtitleDetectionResult(
 
 class OcrSubtitleDetector private constructor() {
 
-    private val recognizer by lazy {
-        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    @Volatile
+    private var recognizer: com.google.mlkit.vision.text.TextRecognizer? = null
+
+    private fun getRecognizer(): com.google.mlkit.vision.text.TextRecognizer {
+        return recognizer ?: synchronized(this) {
+            recognizer ?: TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS).also {
+                recognizer = it
+            }
+        }
     }
 
     suspend fun detectSubtitles(bitmap: Bitmap): SubtitleDetectionResult = withContext(Dispatchers.Default) {
@@ -71,7 +78,7 @@ class OcrSubtitleDetector private constructor() {
         imageWidth: Int,
         imageHeight: Int
     ): SubtitleDetectionResult = suspendCancellableCoroutine { continuation ->
-        recognizer.process(inputImage)
+        getRecognizer().process(inputImage)
             .addOnSuccessListener { visionText ->
                 val analysis = analyzeVisionText(visionText, imageWidth, imageHeight)
                 if (continuation.isActive) {
@@ -160,10 +167,14 @@ class OcrSubtitleDetector private constructor() {
     }
 
     fun close() {
-        try {
-            recognizer.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error closing TextRecognizer", e)
+        synchronized(this) {
+            try {
+                recognizer?.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing TextRecognizer", e)
+            } finally {
+                recognizer = null
+            }
         }
     }
 

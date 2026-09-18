@@ -17,5 +17,15 @@ class MainScreenViewModelTest {
             sizeBytes = 1024
         )
         assertEquals(true, screenshot.formattedDate.isNotEmpty())
+        assertEquals(1080, screenshot.width)
+        assertEquals(1920, screenshot.height)
+        assertEquals("test_1", screenshot.id)
+    }
+
+    @Test
+    fun settingsRepository_availableModels_containsActiveGeminiModels() {
+        val models = com.example.subsnap.data.SettingsRepository.AVAILABLE_MODELS
+        assertEquals(true, models.contains("gemini-2.5-flash"))
+        assertEquals(true, models.contains("gemini-2.0-flash"))
     }
 }

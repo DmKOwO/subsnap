@@ -51,4 +51,20 @@ class OcrSubtitleDetectorTest {
         assertFalse(detector.isEnglishSubtitleText("Netflix"))
         assertTrue(detector.isEnglishSubtitleText("Let's go"))
     }
+
+    @Test
+    fun close_canBeCalledSafelyAndRepeatedly() {
+        detector.close()
+        detector.close() // Should not throw
+        assertTrue(detector.isEnglishSubtitleText("Let's go ahead"))
+    }
+
+    @Test
+    fun detectSubtitles_nonExistentFile_returnsFalseGracefully() = kotlinx.coroutines.test.runTest {
+        val nonExistent = java.io.File("/tmp/does_not_exist_${System.currentTimeMillis()}.webp")
+        val result = detector.detectSubtitles(nonExistent)
+        assertFalse(result.hasSubtitles)
+        assertEquals(0, result.englishWordCount)
+        assertEquals("", result.detectedText)
+    }
 }

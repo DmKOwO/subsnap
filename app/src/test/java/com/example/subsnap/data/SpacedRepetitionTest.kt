@@ -106,6 +106,31 @@ class SpacedRepetitionTest {
         assertEquals("1 дн", SpacedRepetition.formatIntervalPreview(newCard, ReviewRating.HARD))
         assertEquals("1 дн", SpacedRepetition.formatIntervalPreview(newCard, ReviewRating.GOOD))
         assertEquals("4 дн", SpacedRepetition.formatIntervalPreview(newCard, ReviewRating.EASY))
+
+        // Reviewed card (reps=1, interval=1)
+        val reviewedCard = baseCard.copy(repetitions = 1, intervalDays = 1, lastReviewedTimestamp = 1000L)
+        assertEquals("1 дн", SpacedRepetition.formatIntervalPreview(reviewedCard, ReviewRating.HARD))
+        assertEquals("6 дн", SpacedRepetition.formatIntervalPreview(reviewedCard, ReviewRating.GOOD))
+        assertEquals("8 дн", SpacedRepetition.formatIntervalPreview(reviewedCard, ReviewRating.EASY))
+    }
+
+    @Test
+    fun calculateNextReview_easy_alwaysExceedsGoodAtRepetition2AndBeyond() {
+        val now = 10_000_000L
+        val cardAfterRep1 = SpacedRepetition.calculateNextReview(baseCard, ReviewRating.GOOD, now)
+        assertEquals(1, cardAfterRep1.repetitions)
+        assertEquals(1, cardAfterRep1.intervalDays)
+
+        // At repetition 2
+        val nextGood = SpacedRepetition.calculateNextReview(cardAfterRep1, ReviewRating.GOOD, now)
+        val nextEasy = SpacedRepetition.calculateNextReview(cardAfterRep1, ReviewRating.EASY, now)
+
+        assertEquals(2, nextGood.repetitions)
+        assertEquals(6, nextGood.intervalDays)
+
+        assertEquals(2, nextEasy.repetitions)
+        assertTrue("Easy interval (${nextEasy.intervalDays}) must be greater than Good interval (${nextGood.intervalDays})", nextEasy.intervalDays > nextGood.intervalDays)
+        assertEquals(8, nextEasy.intervalDays)
     }
 
     @Test

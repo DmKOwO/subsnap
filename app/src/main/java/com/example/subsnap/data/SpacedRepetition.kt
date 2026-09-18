@@ -60,7 +60,11 @@ object SpacedRepetition {
                 easeFactor += 0.15f
                 intervalDays = when (repetitions) {
                     1 -> 4
-                    else -> max(2, (card.intervalDays * easeFactor * 1.3f).roundToInt())
+                    2 -> max(8, (card.intervalDays * easeFactor * 1.3f).roundToInt())
+                    else -> {
+                        val goodInterval = max(1, (card.intervalDays * card.easeFactor).roundToInt())
+                        max(goodInterval + 1, (card.intervalDays * easeFactor * 1.3f).roundToInt())
+                    }
                 }
                 nextReviewTimestamp = currentTimeMillis + (intervalDays * ONE_DAY_MS)
             }
@@ -96,9 +100,14 @@ object SpacedRepetition {
             }
             ReviewRating.EASY -> {
                 val nextReps = card.repetitions + 1
+                val projectedEase = card.easeFactor + 0.15f
                 val days = when (nextReps) {
                     1 -> 4
-                    else -> max(2, (card.intervalDays * card.easeFactor * 1.3f).roundToInt())
+                    2 -> max(8, (card.intervalDays * projectedEase * 1.3f).roundToInt())
+                    else -> {
+                        val goodInterval = max(1, (card.intervalDays * card.easeFactor).roundToInt())
+                        max(goodInterval + 1, (card.intervalDays * projectedEase * 1.3f).roundToInt())
+                    }
                 }
                 "$days дн"
             }

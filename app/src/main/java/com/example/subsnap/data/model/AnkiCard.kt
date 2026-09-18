@@ -59,10 +59,13 @@ data class AnkiCard(
         val cleanSentence = sentence.replace("\t", " ").replace("\n", " ")
         val cleanSentenceTrans = sentenceTranslation.replace("\t", " ").replace("\n", " ")
         val cleanExplanation = explanation.replace("\t", " ").replace("\n", " ")
+        val cleanTargetWord = targetWord.replace("\t", " ").replace("\n", " ")
+        val cleanTranscription = transcription.replace("\t", " ").replace("\n", " ")
+        val cleanWordTranslation = wordTranslation.replace("\t", " ").replace("\n", " ")
         val imgTag = "<img src=\"${screenshotFile.name}\">"
 
         val front = "$cleanSentence<br><br>$imgTag"
-        val back = "<b>$targetWord</b> <i>$transcription</i><br><b>Перевод:</b> $wordTranslation<br><br><b>Предложение:</b> $cleanSentenceTrans<br><b>Контекст:</b> $cleanExplanation"
+        val back = "<b>$cleanTargetWord</b> <i>$cleanTranscription</i><br><b>Перевод:</b> $cleanWordTranslation<br><br><b>Предложение:</b> $cleanSentenceTrans<br><b>Контекст:</b> $cleanExplanation"
 
         return "$front\t$back"
     }

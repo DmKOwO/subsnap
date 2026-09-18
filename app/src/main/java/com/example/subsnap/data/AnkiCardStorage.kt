@@ -71,8 +71,12 @@ class AnkiCardStorage(private val context: Context) {
 
     suspend fun saveCard(card: AnkiCard): Unit = withContext(Dispatchers.IO) {
         val current = _cards.value.toMutableList()
-        current.removeAll { it.id == card.id }
-        current.add(0, card)
+        val existingIndex = current.indexOfFirst { it.id == card.id }
+        if (existingIndex >= 0) {
+            current[existingIndex] = card
+        } else {
+            current.add(0, card)
+        }
         persist(current)
     }
 

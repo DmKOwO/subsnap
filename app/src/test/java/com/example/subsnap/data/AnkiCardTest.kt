@@ -42,9 +42,9 @@ class AnkiCardTest {
         val card = AnkiCard(
             id = "card_dirty",
             screenshotFile = File("test.webp"),
-            targetWord = "clean",
-            transcription = "",
-            wordTranslation = "чистый",
+            targetWord = "clean\tword\n",
+            transcription = "[kl\tiːn]\n",
+            wordTranslation = "чистый\tперевод\n",
             sentence = "Line 1\nLine 2\twith tabs",
             sentenceTranslation = "Перевод\nс переносом\tи табуляцией",
             explanation = "Объяснение\nстрока 2",
@@ -98,5 +98,19 @@ class AnkiCardTest {
         val rawWithGenericFence = "```\n{\"sentence\": \"Hello\"}\n```"
         val cleanedGeneric = com.example.subsnap.ai.GeminiApiClient.cleanJsonOutput(rawWithGenericFence)
         assertEquals("{\"sentence\": \"Hello\"}", cleanedGeneric)
+    }
+
+    @Test
+    fun cleanJsonOutput_handlesPreambleAndPostambleText() {
+        val rawWithPreamble = "Here is the parsed card:\n```json\n{\"sentence\": \"Hello world\", \"target_word\": \"world\"}\n```\nHope this helps!"
+        val cleaned = com.example.subsnap.ai.GeminiApiClient.cleanJsonOutput(rawWithPreamble)
+        assertEquals("{\"sentence\": \"Hello world\", \"target_word\": \"world\"}", cleaned)
+    }
+
+    @Test
+    fun cleanJsonOutput_handlesRawJsonWithoutFences() {
+        val rawPure = "   {\"sentence\": \"Pure JSON\", \"target_word\": \"pure\"}   "
+        val cleaned = com.example.subsnap.ai.GeminiApiClient.cleanJsonOutput(rawPure)
+        assertEquals("{\"sentence\": \"Pure JSON\", \"target_word\": \"pure\"}", cleaned)
     }
 }

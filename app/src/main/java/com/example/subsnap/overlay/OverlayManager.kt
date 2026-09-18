@@ -292,13 +292,20 @@ class OverlayManager(
     }
 
     private fun snapToEdge() {
-        val displayMetrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getMetrics(displayMetrics)
+        val dp = { value: Float ->
+            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, context.resources.displayMetrics).toInt()
+        }
+        val displayMetrics = context.resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
+        val bubbleWidth = mainBubble?.width?.takeIf { it > 0 } ?: dp(56f)
+        val margin = dp(12f)
 
         val currentX = layoutParams.x
-        val targetX = if (currentX + 100 < screenWidth / 2) 20 else screenWidth - 180
+        val targetX = if (currentX + (bubbleWidth / 2) < screenWidth / 2) {
+            margin
+        } else {
+            screenWidth - bubbleWidth - margin
+        }
 
         val animator = ValueAnimator.ofInt(currentX, targetX).apply {
             duration = 200

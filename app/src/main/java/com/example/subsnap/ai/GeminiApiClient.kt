@@ -21,7 +21,7 @@ class GeminiApiClient(private val context: Context) {
 
     private val settingsRepository = SettingsRepository.getInstance(context)
 
-    suspend fun analyzeScreenshot(screenshotFile: File): Result<AnkiCard> = withContext(Dispatchers.IO) {
+    suspend fun analyzeScreenshot(screenshotFile: File, ocrHint: String? = null): Result<AnkiCard> = withContext(Dispatchers.IO) {
         val apiKey = settingsRepository.apiKey.value
         if (apiKey.isBlank()) {
             return@withContext Result.failure(
@@ -44,10 +44,14 @@ class GeminiApiClient(private val context: Context) {
             val base64Image = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
             val mimeType = if (screenshotFile.extension.lowercase() == "webp") "image/webp" else "image/jpeg"
 
+            val ocrContextBlock = if (!ocrHint.isNullOrBlank()) {
+                "\n[On-device OCR Subtitle Hint]:\n\"$ocrHint\"\nUse this detected text as helpful context for identifying the exact subtitle sentence.\n"
+            } else ""
+
             // Construct payload
             val promptText = """
                 You are an expert English language teacher helping a student memorize vocabulary using Anki.
-                Analyze this screenshot taken while watching a movie/video, reading, or gaming.
+                Analyze this screenshot taken while watching a movie/video, reading, or gaming.$ocrContextBlock
                 1. Locate the English subtitles, dialogue, or visible speech text.
                 2. Extract the complete English sentence.
                 3. Choose the most useful or challenging English vocabulary word or idiom from the sentence.
@@ -188,7 +192,13 @@ class GeminiApiClient(private val context: Context) {
         private const val TAG = "GeminiApiClient"
 
         fun cleanJsonOutput(raw: String): String {
-            var text = raw.trim()
+            val trimmed = raw.trim()
+            val firstBrace = trimmed.indexOf('{')
+            val lastBrace = trimmed.lastIndexOf('}')
+            if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace) {
+                return trimmed.substring(firstBrace, lastBrace + 1).trim()
+            }
+            var text = trimmed
             if (text.startsWith("```")) {
                 text = text.removePrefix("```json")
                     .removePrefix("```JSON")

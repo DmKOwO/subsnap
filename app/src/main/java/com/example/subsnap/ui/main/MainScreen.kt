@@ -57,6 +57,11 @@ import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -80,10 +85,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import com.example.subsnap.ocr.OcrSubtitleDetector
+import com.example.subsnap.ocr.SubtitleDetectionResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -138,6 +146,7 @@ fun MainScreen(
     val filterEmptyScreenshots by viewModel.filterEmptyScreenshots.collectAsStateWithLifecycle()
     val isAnalyzing by viewModel.isAnalyzing.collectAsStateWithLifecycle()
     val analysisError by viewModel.analysisError.collectAsStateWithLifecycle()
+    val lastFailedScreenshot by viewModel.lastFailedScreenshot.collectAsStateWithLifecycle()
     val generatedCard by viewModel.generatedCard.collectAsStateWithLifecycle()
 
     val ttsHelper = remember { TtsHelper.getInstance(context) }
@@ -273,8 +282,15 @@ fun MainScreen(
                 )
             }
 
-            if (selectedTabIndex == 0) {
-                // TAB 1: SCREENSHOTS
+            AnimatedContent(
+                targetState = selectedTabIndex,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
+                },
+                label = "TabContentTransition"
+            ) { tabIndex ->
+                if (tabIndex == 0) {
+                    // TAB 1: SCREENSHOTS
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -495,6 +511,7 @@ fun MainScreen(
                 }
             }
         }
+        }
     }
 
     // AI Analysis Loading Dialog
@@ -530,19 +547,40 @@ fun MainScreen(
 
     // AI Analysis Error Dialog
     analysisError?.let { err ->
+        val failedScreenshot = lastFailedScreenshot
+        val isOcrWarning = err.startsWith("ML Kit OCR")
         AlertDialog(
             onDismissRequest = { viewModel.dismissGeneratedCard() },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = if (isOcrWarning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Ошибка генерации")
+                    Text(if (isOcrWarning) "Проверка субтитров" else "Ошибка генерации")
                 }
             },
             text = { Text(err) },
             confirmButton = {
-                Button(onClick = { viewModel.dismissGeneratedCard() }) {
-                    Text("Понятно")
+                if (isOcrWarning && failedScreenshot != null) {
+                    Button(onClick = {
+                        viewModel.analyzeScreenshot(failedScreenshot, forceSend = true)
+                    }) {
+                        Text("Всё равно отправить")
+                    }
+                } else {
+                    Button(onClick = { viewModel.dismissGeneratedCard() }) {
+                        Text("Понятно")
+                    }
+                }
+            },
+            dismissButton = {
+                if (isOcrWarning && failedScreenshot != null) {
+                    OutlinedButton(onClick = { viewModel.dismissGeneratedCard() }) {
+                        Text("Отмена")
+                    }
                 }
             }
         )
@@ -1373,6 +1411,11 @@ fun ScreenshotPreviewDialog(
     onAiAnalyze: () -> Unit
 ) {
     val fullBitmap = rememberFullBitmap(item.file)
+    val ocrResult by produceState<SubtitleDetectionResult?>(initialValue = null, key1 = item.file.absolutePath) {
+        value = withContext(Dispatchers.IO) {
+            OcrSubtitleDetector.getInstance().detectSubtitles(item.file)
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -1422,6 +1465,49 @@ fun ScreenshotPreviewDialog(
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit
                         )
+                    }
+                }
+
+                // OCR Subtitle Detection Preview
+                val currentOcr = ocrResult
+                if (currentOcr != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (currentOcr.hasSubtitles) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (currentOcr.hasSubtitles) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = if (currentOcr.hasSubtitles) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (currentOcr.hasSubtitles) {
+                                        "ML Kit: Субтитры найдены (${currentOcr.englishWordCount} сл.)"
+                                    } else {
+                                        "ML Kit: Текст субтитров не обнаружен"
+                                    },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (currentOcr.hasSubtitles) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            if (currentOcr.detectedText.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "«${currentOcr.detectedText.take(160)}»",
+                                    fontSize = 11.sp,
+                                    fontStyle = FontStyle.Italic,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
                 }
 

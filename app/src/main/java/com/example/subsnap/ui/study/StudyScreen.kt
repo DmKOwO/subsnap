@@ -2,6 +2,7 @@ package com.example.subsnap.ui.study
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -91,11 +92,15 @@ fun StudyScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    BackHandler(enabled = true) {
+        onBack()
+    }
+
     val context = LocalContext.current
     val ttsHelper = remember { TtsHelper.getInstance(context) }
 
-    // Session queue
-    val studyQueue = remember(allCards) {
+    // Session queue (initialized once per session)
+    val studyQueue = remember {
         val due = SpacedRepetition.getDueCards(allCards)
         val initialList = if (due.isNotEmpty()) due else allCards
         mutableStateListOf<AnkiCard>().apply { addAll(initialList) }
@@ -751,7 +756,10 @@ fun rememberCardBitmap(file: File): Bitmap? {
     return produceState<Bitmap?>(initialValue = null, key1 = file.absolutePath) {
         value = withContext(Dispatchers.IO) {
             try {
-                BitmapFactory.decodeFile(file.absolutePath)
+                val options = BitmapFactory.Options().apply {
+                    inSampleSize = 2
+                }
+                BitmapFactory.decodeFile(file.absolutePath, options)
             } catch (e: Exception) {
                 null
             }
