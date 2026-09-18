@@ -1310,8 +1310,15 @@ fun SettingsDialog(
                         onDismissRequest = { isModelDropdownExpanded = false }
                     ) {
                         SettingsRepository.AVAILABLE_MODELS.forEach { model ->
+                            val label = when (model) {
+                                "gemini-3.8-flash" -> "gemini-3.8-flash (Рекомендуется)"
+                                "gemini-3.5-flash" -> "gemini-3.5-flash (Быстрая)"
+                                "gemini-3.1-flash-lite" -> "gemini-3.1-flash-lite (Экономичная)"
+                                "gemini-flash-latest" -> "gemini-flash-latest (Авто)"
+                                else -> model
+                            }
                             DropdownMenuItem(
-                                text = { Text(model) },
+                                text = { Text(label) },
                                 onClick = {
                                     selectedModel = model
                                     isModelDropdownExpanded = false
@@ -1630,6 +1637,20 @@ fun ControlPanelCard(
             Spacer(modifier = Modifier.height(16.dp))
 
             if (!serviceState.isRunning) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "💡 При запросе разрешения Android обязательно выберите «Весь экран», чтобы захват не отключался в полноэкранном режиме и видеоплеерах.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+
                 Button(
                     onClick = onStartService,
                     modifier = Modifier

@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.res.Configuration
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -168,15 +169,21 @@ class ScreenCaptureService : Service() {
         Log.d(TAG, "Screen metrics initialized: ${screenWidth}x${screenHeight} @ ${screenDensity}dpi")
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.d(TAG, "onConfigurationChanged: orientation=${newConfig.orientation}")
+        checkAndUpdateOrientation()
+    }
+
     private fun checkAndUpdateOrientation() {
         val prevWidth = screenWidth
         val prevHeight = screenHeight
         initDisplayMetrics()
 
         if (prevWidth != screenWidth || prevHeight != screenHeight) {
-            Log.d(TAG, "Display orientation changed to ${screenWidth}x${screenHeight}. Rebuilding VirtualDisplay...")
+            Log.d(TAG, "Display orientation changed from ${prevWidth}x${prevHeight} to ${screenWidth}x${screenHeight}. Resizing VirtualDisplay...")
             serviceScope.launch(Dispatchers.Main) {
-                recreateVirtualDisplay()
+                updateVirtualDisplaySize()
             }
         }
     }
@@ -206,7 +213,14 @@ class ScreenCaptureService : Service() {
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
-                Log.d(TAG, "MediaProjection stopped by system")
+                Log.w(TAG, "MediaProjection stopped by system")
+                serviceScope.launch(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@ScreenCaptureService,
+                        "Захват экрана остановлен системой (выбирайте «Весь экран» при запросе)",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
                 cleanupProjection()
                 stopSelf()
             }
@@ -237,13 +251,34 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    private fun recreateVirtualDisplay() {
-        virtualDisplay?.release()
-        virtualDisplay = null
-        imageReader?.close()
-        imageReader = null
+    private fun updateVirtualDisplaySize() {
+        val vd = virtualDisplay
+        if (vd == null) {
+            createVirtualDisplay()
+            return
+        }
 
-        createVirtualDisplay()
+        try {
+            val oldReader = imageReader
+            val newReader = ImageReader.newInstance(
+                screenWidth,
+                screenHeight,
+                PixelFormat.RGBA_8888,
+                2
+            )
+            imageReader = newReader
+
+            // Dynamic resize in-place without invalidating MediaProjection token!
+            vd.resize(screenWidth, screenHeight, screenDensity)
+            vd.surface = newReader.surface
+
+            oldReader?.close()
+            Log.d(TAG, "VirtualDisplay successfully resized to ${screenWidth}x${screenHeight} @ ${screenDensity}dpi")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resizing VirtualDisplay on orientation change", e)
+        }
+
+        overlayManager?.onConfigurationChanged(screenWidth, screenHeight)
     }
 
     fun captureAndSave(isAutoMode: Boolean = false, onFinished: ((Boolean) -> Unit)? = null) {

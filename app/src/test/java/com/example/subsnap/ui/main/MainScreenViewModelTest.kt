@@ -25,7 +25,8 @@ class MainScreenViewModelTest {
     @Test
     fun settingsRepository_availableModels_containsActiveGeminiModels() {
         val models = com.example.subsnap.data.SettingsRepository.AVAILABLE_MODELS
-        assertEquals(true, models.contains("gemini-2.5-flash"))
-        assertEquals(true, models.contains("gemini-2.0-flash"))
+        assertEquals(true, models.contains("gemini-3.8-flash"))
+        assertEquals(true, models.contains("gemini-3.5-flash"))
+        assertEquals(true, models.contains("gemini-3.1-flash-lite"))
     }
 }

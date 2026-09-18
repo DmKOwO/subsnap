@@ -86,13 +86,13 @@ class GeminiApiClient(private val context: Context) {
                         val partsArray = JSONArray().apply {
                             // Text prompt
                             put(JSONObject().apply { put("text", promptText) })
-                            // Image data
+                            // Image data (Gemini 3.x format)
                             put(JSONObject().apply {
                                 val inlineData = JSONObject().apply {
-                                    put("mime_type", mimeType)
+                                    put("mimeType", mimeType)
                                     put("data", base64Image)
                                 }
-                                put("inline_data", inlineData)
+                                put("inlineData", inlineData)
                             })
                         }
                         put("parts", partsArray)
@@ -102,7 +102,7 @@ class GeminiApiClient(private val context: Context) {
                 put("contents", contentsArray)
 
                 val generationConfig = JSONObject().apply {
-                    put("response_mime_type", "application/json")
+                    put("responseMimeType", "application/json")
                     put("temperature", 0.2)
                 }
                 put("generationConfig", generationConfig)
@@ -132,12 +132,19 @@ class GeminiApiClient(private val context: Context) {
                 val errorBody = BufferedReader(InputStreamReader(errorStream, "UTF-8")).use { it.readText() }
                 Log.e(TAG, "Gemini API error ($responseCode): $errorBody")
 
+                val serverMessage = try {
+                    JSONObject(errorBody).getJSONObject("error").getString("message")
+                } catch (e: Exception) {
+                    null
+                }
+
                 val msg = when (responseCode) {
-                    400 -> "Неверный запрос или формат изображения (400)"
-                    403 -> "Неверный API-ключ Gemini или доступ ограничен (403)"
+                    400 -> serverMessage ?: "Неверный запрос или формат параметров (400)"
+                    403 -> serverMessage ?: "Неверный API-ключ Gemini или доступ ограничен (403)"
+                    404 -> serverMessage ?: "Модель не найдена (404). Выберите gemini-3.8-flash в Настройках"
                     429 -> "Превышен лимит запросов Gemini (подождите минуту) (429)"
                     500, 503 -> "Сервер Gemini временно недоступен (50x)"
-                    else -> "Ошибка Gemini API: код $responseCode"
+                    else -> serverMessage ?: "Ошибка Gemini API: код $responseCode"
                 }
                 return@withContext Result.failure(Exception(msg))
             }

@@ -50,12 +50,38 @@ class OverlayManager(
         }
         format = PixelFormat.TRANSLUCENT
         flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         width = WindowManager.LayoutParams.WRAP_CONTENT
         height = WindowManager.LayoutParams.WRAP_CONTENT
         gravity = Gravity.TOP or Gravity.START
         x = 50
         y = 300
+    }
+
+    private fun dp(value: Float): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            value,
+            context.resources.displayMetrics
+        ).toInt()
+    }
+
+    fun onConfigurationChanged(newScreenWidth: Int, newScreenHeight: Int) {
+        mainHandler.post {
+            val margin = dp(16f)
+            val bubbleSize = dp(64f)
+            layoutParams.x = layoutParams.x.coerceIn(margin, (newScreenWidth - bubbleSize).coerceAtLeast(margin))
+            layoutParams.y = layoutParams.y.coerceIn(margin, (newScreenHeight - bubbleSize).coerceAtLeast(margin))
+            rootLayout?.let {
+                try {
+                    windowManager.updateViewLayout(it, layoutParams)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
     }
 
     fun show() {
