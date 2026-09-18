@@ -24,14 +24,28 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val settingsRepository = SettingsRepository.getInstance(application)
     private val geminiClient = GeminiApiClient.getInstance(application)
     private val ocrDetector = OcrSubtitleDetector.getInstance()
+    private val updateManager = com.example.subsnap.ota.GitHubUpdateManager.getInstance(application)
 
     val screenshots: StateFlow<List<CapturedScreenshot>> = screenshotStorage.screenshots
     val cards: StateFlow<List<AnkiCard>> = ankiCardStorage.cards
     val apiKey: StateFlow<String> = settingsRepository.apiKey
     val selectedModel: StateFlow<String> = settingsRepository.selectedModel
     val filterEmptyScreenshots: StateFlow<Boolean> = settingsRepository.filterEmptyScreenshots
+    val githubRepo: StateFlow<String> = settingsRepository.githubRepo
     val serviceState: StateFlow<ScreenCaptureService.Companion.ServiceState> =
         ScreenCaptureService.serviceState
+
+    val downloadState: StateFlow<com.example.subsnap.ota.GitHubUpdateManager.DownloadState> =
+        updateManager.downloadState
+
+    private val _updateInfo = MutableStateFlow<com.example.subsnap.ota.AppUpdateInfo?>(null)
+    val updateInfo: StateFlow<com.example.subsnap.ota.AppUpdateInfo?> = _updateInfo.asStateFlow()
+
+    private val _isCheckingUpdate = MutableStateFlow(false)
+    val isCheckingUpdate: StateFlow<Boolean> = _isCheckingUpdate.asStateFlow()
+
+    private val _updateMessage = MutableStateFlow<String?>(null)
+    val updateMessage: StateFlow<String?> = _updateMessage.asStateFlow()
 
     private val _isAnalyzing = MutableStateFlow(false)
     val isAnalyzing: StateFlow<Boolean> = _isAnalyzing.asStateFlow()
@@ -139,5 +153,44 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
             val file = ankiCardStorage.exportToAnkiFile()
             onExported(file)
         }
+    }
+
+    fun checkForUpdates(userInitiated: Boolean = false) {
+        viewModelScope.launch {
+            _isCheckingUpdate.value = true
+            _updateMessage.value = null
+            val result = updateManager.checkForUpdates(settingsRepository.githubRepo.value)
+            result.onSuccess { info ->
+                if (info.isUpdateAvailable) {
+                    _updateInfo.value = info
+                } else if (userInitiated) {
+                    _updateMessage.value = "У вас установлена самая свежая версия (${info.currentVersion})"
+                }
+            }.onFailure { err ->
+                if (userInitiated) {
+                    _updateMessage.value = err.message ?: "Не удалось проверить обновления"
+                }
+            }
+            _isCheckingUpdate.value = false
+        }
+    }
+
+    fun downloadAndInstallUpdate(downloadUrl: String) {
+        viewModelScope.launch {
+            val result = updateManager.downloadApk(downloadUrl)
+            result.onSuccess { apkFile ->
+                updateManager.installApk(apkFile)
+            }
+        }
+    }
+
+    fun dismissUpdate() {
+        _updateInfo.value = null
+        _updateMessage.value = null
+        updateManager.resetState()
+    }
+
+    fun setGithubRepo(repo: String) {
+        settingsRepository.setGithubRepo(repo)
     }
 }

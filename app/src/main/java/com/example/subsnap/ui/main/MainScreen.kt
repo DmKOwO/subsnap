@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -70,6 +71,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -129,6 +131,9 @@ import com.example.subsnap.tts.TtsHelper
 import com.example.subsnap.ui.study.StudyScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.subsnap.BuildConfig
+import com.example.subsnap.ota.AppUpdateInfo
+import com.example.subsnap.ota.GitHubUpdateManager
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -148,6 +153,11 @@ fun MainScreen(
     val analysisError by viewModel.analysisError.collectAsStateWithLifecycle()
     val lastFailedScreenshot by viewModel.lastFailedScreenshot.collectAsStateWithLifecycle()
     val generatedCard by viewModel.generatedCard.collectAsStateWithLifecycle()
+    val updateInfo by viewModel.updateInfo.collectAsStateWithLifecycle()
+    val downloadState by viewModel.downloadState.collectAsStateWithLifecycle()
+    val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
+    val updateMessage by viewModel.updateMessage.collectAsStateWithLifecycle()
+    val githubRepo by viewModel.githubRepo.collectAsStateWithLifecycle()
 
     val ttsHelper = remember { TtsHelper.getInstance(context) }
     var isInStudyMode by remember { mutableStateOf(false) }
@@ -174,6 +184,13 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         hasOverlayPermission = Settings.canDrawOverlays(context)
+        viewModel.checkForUpdates(userInitiated = false)
+    }
+
+    LaunchedEffect(updateMessage) {
+        updateMessage?.let { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        }
     }
 
     if (isInStudyMode) {
@@ -633,16 +650,40 @@ fun MainScreen(
         )
     }
 
+    // OTA Update Dialog
+    if (updateInfo != null) {
+        UpdateAvailableDialog(
+            updateInfo = updateInfo!!,
+            downloadState = downloadState,
+            onDismiss = { viewModel.dismissUpdate() },
+            onDownload = { url -> viewModel.downloadAndInstallUpdate(url) },
+            onOpenBrowser = { url ->
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Не удалось открыть браузер", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
     // Settings / API Key Dialog
     if (showSettingsDialog) {
         SettingsDialog(
             currentApiKey = apiKey,
             currentModel = selectedModel,
             currentFilterEmpty = filterEmptyScreenshots,
-            onSave = { newKey, newModel, newFilterEmpty ->
+            currentGithubRepo = githubRepo,
+            isCheckingUpdate = isCheckingUpdate,
+            onCheckForUpdates = { viewModel.checkForUpdates(userInitiated = true) },
+            onSave = { newKey, newModel, newFilterEmpty, newRepo ->
                 viewModel.setApiKey(newKey)
                 viewModel.setSelectedModel(newModel)
                 viewModel.setFilterEmptyScreenshots(newFilterEmpty)
+                viewModel.setGithubRepo(newRepo)
                 showSettingsDialog = false
                 Toast.makeText(context, "Настройки сохранены", Toast.LENGTH_SHORT).show()
             },
@@ -1242,27 +1283,38 @@ fun SettingsDialog(
     currentApiKey: String,
     currentModel: String,
     currentFilterEmpty: Boolean,
-    onSave: (String, String, Boolean) -> Unit,
+    currentGithubRepo: String,
+    isCheckingUpdate: Boolean,
+    onCheckForUpdates: () -> Unit,
+    onSave: (String, String, Boolean, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var apiKeyText by remember { mutableStateOf(currentApiKey) }
     var selectedModel by remember { mutableStateOf(currentModel) }
     var filterEmpty by remember { mutableStateOf(currentFilterEmpty) }
+    var githubRepoText by remember { mutableStateOf(currentGithubRepo) }
     var isModelDropdownExpanded by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.fillMaxWidth()
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 620.dp)
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Настройки Gemini ИИ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Настройки", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = null)
                     }
@@ -1271,12 +1323,21 @@ fun SettingsDialog(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Для извлечения субтитров и перевода используется бесплатный API Gemini от Google AI Studio.",
+                    text = "ИИ И РАСПОЗНАВАНИЕ",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "Бесплатный Gemini API от Google AI Studio для перевода и извлечения субтитров.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 OutlinedTextField(
                     value = apiKeyText,
@@ -1287,7 +1348,7 @@ fun SettingsDialog(
                     singleLine = true
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Model Selector
                 ExposedDropdownMenuBox(
@@ -1298,7 +1359,7 @@ fun SettingsDialog(
                         value = selectedModel,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Модель") },
+                        label = { Text("Модель Gemini") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isModelDropdownExpanded) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1328,7 +1389,7 @@ fun SettingsDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // OCR Empty Frame Filter Switch
                 Row(
@@ -1356,6 +1417,52 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                Text(
+                    text = "ОБНОВЛЕНИЯ (OTA)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "SubSnap v${BuildConfig.VERSION_NAME} • Автоматические обновления с GitHub Releases.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = githubRepoText,
+                    onValueChange = { githubRepoText = it },
+                    label = { Text("GitHub репозиторий (owner/repo)") },
+                    placeholder = { Text("dmk/subsnap") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = onCheckForUpdates,
+                    enabled = !isCheckingUpdate && githubRepoText.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isCheckingUpdate) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Проверка обновлений...")
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Проверить обновления сейчас")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1364,10 +1471,214 @@ fun SettingsDialog(
                         Text("Отмена")
                     }
                     Button(
-                        onClick = { onSave(apiKeyText.trim(), selectedModel, filterEmpty) },
+                        onClick = { onSave(apiKeyText.trim(), selectedModel, filterEmpty, githubRepoText.trim()) },
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Сохранить")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun UpdateAvailableDialog(
+    updateInfo: AppUpdateInfo,
+    downloadState: GitHubUpdateManager.DownloadState,
+    onDismiss: () -> Unit,
+    onDownload: (String) -> Unit,
+    onOpenBrowser: (String) -> Unit
+) {
+    val context = LocalContext.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Новое обновление!",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Закрыть")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Text(
+                            text = "Версия ${updateInfo.tagName}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Text(
+                        text = "(у вас v${updateInfo.currentVersion})",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (updateInfo.changelog.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Что нового:",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 160.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                text = updateInfo.changelog,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Download Progress / Status
+                when (downloadState) {
+                    is GitHubUpdateManager.DownloadState.Downloading -> {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Скачивание APK...", fontSize = 12.sp)
+                                Text("${downloadState.progressPercent}%", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { downloadState.progressPercent / 100f },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                            )
+                        }
+                    }
+                    is GitHubUpdateManager.DownloadState.ReadyToInstall -> {
+                        Text(
+                            text = "Файл APK готов к установке!",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    is GitHubUpdateManager.DownloadState.Error -> {
+                        Text(
+                            text = "Ошибка загрузки: ${downloadState.message}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    is GitHubUpdateManager.DownloadState.Idle -> {
+                        if (updateInfo.apkDownloadUrl != null) {
+                            Text(
+                                text = "Обновление будет скачано и установлено прямо в приложении (OTA).",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = "APK не прикреплен к релизу. Вы можете открыть релиз на странице GitHub.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Позже")
+                    }
+
+                    val isDownloading = downloadState is GitHubUpdateManager.DownloadState.Downloading
+                    val isReady = downloadState is GitHubUpdateManager.DownloadState.ReadyToInstall
+
+                    Button(
+                        onClick = {
+                            when {
+                                downloadState is GitHubUpdateManager.DownloadState.ReadyToInstall -> {
+                                    GitHubUpdateManager.getInstance(context).installApk(downloadState.apkFile)
+                                }
+                                updateInfo.apkDownloadUrl != null -> {
+                                    onDownload(updateInfo.apkDownloadUrl)
+                                }
+                                else -> {
+                                    onOpenBrowser(updateInfo.htmlUrl)
+                                }
+                            }
+                        },
+                        enabled = !isDownloading,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        when {
+                            isDownloading -> Text("Загрузка...")
+                            isReady -> Text("Установить")
+                            updateInfo.apkDownloadUrl != null -> Text("Скачать")
+                            else -> Text("На GitHub")
+                        }
                     }
                 }
             }

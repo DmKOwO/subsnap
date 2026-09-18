@@ -9,6 +9,8 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.TypedValue
@@ -153,6 +155,7 @@ class OverlayManager(
         menuContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(dp(180f), LinearLayout.LayoutParams.WRAP_CONTENT)
             setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#EE1E1E2C"))
@@ -188,6 +191,7 @@ class OverlayManager(
                     text = if (isAutoCapturing) "Авто: ВКЛ" else "Авто: ВЫКЛ"
                     setTextColor(Color.WHITE)
                     textSize = 13f
+                    isSingleLine = true
                 }
                 addView(autoStatusText)
 
@@ -249,6 +253,7 @@ class OverlayManager(
             this.text = text
             setTextColor(Color.WHITE)
             textSize = 13f
+            isSingleLine = true
             setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
             background = createRippleDrawable()
             setOnClickListener { onClick() }
@@ -277,6 +282,16 @@ class OverlayManager(
         var initialTouchX = 0f
         var initialTouchY = 0f
         var isDragging = false
+        var isLongPressTriggered = false
+        var downTime = 0L
+        val longPressHandler = Handler(Looper.getMainLooper())
+        val longPressRunnable = Runnable {
+            if (!isDragging && !isMenuExpanded) {
+                isLongPressTriggered = true
+                toggleMenu()
+                triggerHapticFeedback()
+            }
+        }
 
         view.setOnTouchListener { _, event ->
             when (event.action) {
@@ -286,14 +301,19 @@ class OverlayManager(
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
+                    isLongPressTriggered = false
+                    downTime = System.currentTimeMillis()
+                    longPressHandler.postDelayed(longPressRunnable, 400)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val deltaX = (event.rawX - initialTouchX).toInt()
                     val deltaY = (event.rawY - initialTouchY).toInt()
 
-                    if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
+                    if (Math.abs(deltaX) > 12 || Math.abs(deltaY) > 12) {
                         isDragging = true
+                        isLongPressTriggered = false
+                        longPressHandler.removeCallbacks(longPressRunnable)
                         layoutParams.x = initialX + deltaX
                         layoutParams.y = initialY + deltaY
                         try {
@@ -305,15 +325,48 @@ class OverlayManager(
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    longPressHandler.removeCallbacks(longPressRunnable)
+
                     if (!isDragging) {
-                        toggleMenu()
+                        if (isLongPressTriggered) {
+                            isLongPressTriggered = false
+                        } else if (isMenuExpanded) {
+                            toggleMenu()
+                        } else {
+                            // FAST TAP: Instant screenshot in 1 action!
+                            onCaptureClick()
+                        }
                     } else {
                         snapToEdge()
                     }
                     true
                 }
+                MotionEvent.ACTION_CANCEL -> {
+                    longPressHandler.removeCallbacks(longPressRunnable)
+                    true
+                }
                 else -> false
             }
+        }
+    }
+
+    private fun triggerHapticFeedback() {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+        } catch (e: Exception) {
+            // ignore if vibration unavailable
         }
     }
 

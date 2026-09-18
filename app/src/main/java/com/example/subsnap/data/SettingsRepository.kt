@@ -22,6 +22,11 @@ class SettingsRepository(context: Context) {
     )
     val filterEmptyScreenshots: StateFlow<Boolean> = _filterEmptyScreenshots.asStateFlow()
 
+    private val _githubRepo = MutableStateFlow(
+        prefs.getString(KEY_GITHUB_REPO, DEFAULT_GITHUB_REPO) ?: DEFAULT_GITHUB_REPO
+    )
+    val githubRepo: StateFlow<String> = _githubRepo.asStateFlow()
+
     private fun getSanitizedModel(): String {
         val saved = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
         // Automatically migrate deprecated models (gemini-1.5, gemini-2.0, gemini-2.5, etc.) to gemini-3.8-flash
@@ -52,6 +57,12 @@ class SettingsRepository(context: Context) {
         _filterEmptyScreenshots.value = enabled
     }
 
+    fun setGithubRepo(repo: String) {
+        val trimmed = repo.trim()
+        prefs.edit().putString(KEY_GITHUB_REPO, trimmed).apply()
+        _githubRepo.value = trimmed
+    }
+
     val isConfigured: Boolean
         get() = _apiKey.value.isNotBlank()
 
@@ -59,6 +70,8 @@ class SettingsRepository(context: Context) {
         private const val KEY_API_KEY = "gemini_api_key"
         private const val KEY_MODEL = "gemini_model"
         private const val KEY_FILTER_EMPTY = "filter_empty_screenshots"
+        private const val KEY_GITHUB_REPO = "github_repo"
+        const val DEFAULT_GITHUB_REPO = "dmk/subsnap"
 
         // Updated for modern Gemini models in Google AI Studio
         const val DEFAULT_MODEL = "gemini-3.8-flash"
