@@ -51,6 +51,11 @@ class SettingsRepository(context: Context) {
     )
     val autoStartAutoCapture: StateFlow<Boolean> = _autoStartAutoCapture.asStateFlow()
 
+    private val _smartDetectionEnabled = MutableStateFlow(
+        prefs.getBoolean(KEY_SMART_DETECTION, true)
+    )
+    val smartDetectionEnabled: StateFlow<Boolean> = _smartDetectionEnabled.asStateFlow()
+
     private fun getSanitizedModel(): String {
         val saved = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
         // Automatically migrate deprecated models (gemini-1.5, gemini-2.0, gemini-2.5, etc.) to gemini-3.8-flash
@@ -121,6 +126,11 @@ class SettingsRepository(context: Context) {
         _autoStartAutoCapture.value = enabled
     }
 
+    fun setSmartDetectionEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SMART_DETECTION, enabled).apply()
+        _smartDetectionEnabled.value = enabled
+    }
+
     val isConfigured: Boolean
         get() = _apiKey.value.isNotBlank()
 
@@ -135,6 +145,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_SKIP_DUPLICATES = "skip_duplicate_subtitles"
         private const val KEY_AUTO_CAPTURE_INTERVAL = "auto_capture_interval_sec"
         private const val KEY_AUTO_START_CAPTURE = "auto_start_auto_capture"
+        private const val KEY_SMART_DETECTION = "smart_subtitle_detection"
         const val DEFAULT_GITHUB_REPO = "DmKOwO/subsnap"
         const val DEFAULT_AUTO_CAPTURE_INTERVAL = 2.5f
 

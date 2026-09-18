@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SubSnap Visual Subtitle Test Player</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: #0b0f19;
+            color: #f3f4f6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        #header {
+            padding: 12px 16px;
+            background: #111827;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #1f2937;
+            z-index: 10;
+        }
+        #header h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #e5e7eb;
+        }
+        #badge {
+            background: #2563eb;
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 700;
+            font-family: monospace;
+        }
+        #video-container {
+            flex: 1;
+            position: relative;
+            background: #000;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        canvas#video-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #subtitle-zone {
+            position: absolute;
+            bottom: 45px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+            z-index: 5;
+            min-height: 80px;
+        }
+        .subtitle-text {
+            background: rgba(0, 0, 0, 0.82);
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 700;
+            line-height: 1.4;
+            padding: 8px 18px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.9);
+            letter-spacing: 0.3px;
+            max-width: 90%;
+            transition: opacity 0.15s ease-in-out;
+        }
+        #footer-bar {
+            background: #111827;
+            padding: 10px 16px;
+            border-top: 1px solid #1f2937;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #9ca3af;
+        }
+        #progress-container {
+            flex: 1;
+            height: 6px;
+            background: #374151;
+            border-radius: 3px;
+            margin: 0 12px;
+            overflow: hidden;
+        }
+        #progress-bar {
+            height: 100%;
+            width: 0%;
+            background: #ef4444;
+            transition: width 0.2s linear;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🎬 Video Player: The Lost Temple (English Audio + CC)</h1>
+        <div id="badge">T: 0.0s</div>
+    </div>
+
+    <div id="video-container">
+        <canvas id="video-canvas"></canvas>
+        <div id="subtitle-zone">
+            <div id="subtitle-box" class="subtitle-text" style="display: none;"></div>
+        </div>
+    </div>
+
+    <div id="footer-bar">
+        <span id="time-current">0:00</span>
+        <div id="progress-container">
+            <div id="progress-bar"></div>
+        </div>
+        <span id="time-total">0:24</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('video-canvas');
+        const ctx = canvas.getContext('2d');
+        const badge = document.getElementById('badge');
+        const subBox = document.getElementById('subtitle-box');
+        const progressBar = document.getElementById('progress-bar');
+        const timeCurrent = document.getElementById('time-current');
+
+        function resize() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Realistic animated film background with stars, moving light, and cinematic motion
+        let frameCount = 0;
+        const stars = Array.from({ length: 60 }, () => ({
+            x: Math.random(),
+            y: Math.random(),
+            r: Math.random() * 2 + 1,
+            speed: Math.random() * 0.001 + 0.0005
+        }));
+
+        function drawFrame() {
+            frameCount++;
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // Gradient background resembling dusk/cinematic movie scene
+            const grad = ctx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, '#0f172a');
+            grad.addColorStop(0.6, '#1e1b4b');
+            grad.addColorStop(1, '#090d16');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, w, h);
+
+            // Animated stars / dust motes in the background
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            stars.forEach(s => {
+                s.y += s.speed;
+                if (s.y > 1) s.y = 0;
+                ctx.beginPath();
+                ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Gentle moving cinematic spotlight
+            const lightX = w * (0.5 + 0.25 * Math.sin(frameCount * 0.02));
+            const lightY = h * (0.35 + 0.1 * Math.cos(frameCount * 0.015));
+            const radGrad = ctx.createRadialGradient(lightX, lightY, 10, lightX, lightY, w * 0.5);
+            radGrad.addColorStop(0, 'rgba(99, 102, 241, 0.25)');
+            radGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = radGrad;
+            ctx.fillRect(0, 0, w, h);
+
+            requestAnimationFrame(drawFrame);
+        }
+        requestAnimationFrame(drawFrame);
+
+        // Timeline of Subtitles
+        const timeline = [
+            { start: 3.0, end: 7.0, text: "I think we found the secret passage!" },
+            { start: 9.5, end: 13.5, text: "Look closely at the ancient engravings." },
+            { start: 16.0, end: 20.0, text: "We need to hurry before the door closes." },
+            { start: 22.0, end: 25.5, text: "Take a screenshot right now for Sentence Mining!" }
+        ];
+
+        const totalDuration = 26.0;
+        let startTime = performance.now();
+
+        function updateTimeline() {
+            const elapsed = (performance.now() - startTime) / 1000.0;
+            const currentSec = elapsed % totalDuration;
+
+            badge.textContent = `T: ${currentSec.toFixed(1)}s`;
+            const min = Math.floor(currentSec / 60);
+            const sec = Math.floor(currentSec % 60);
+            timeCurrent.textContent = `${min}:${sec < 10 ? '0' : ''}${sec}`;
+            progressBar.style.width = `${(currentSec / totalDuration) * 100}%`;
+
+            let activeSub = null;
+            for (const item of timeline) {
+                if (currentSec >= item.start && currentSec <= item.end) {
+                    activeSub = item.text;
+                    break;
+                }
+            }
+
+            if (activeSub) {
+                subBox.textContent = activeSub;
+                subBox.style.display = 'block';
+            } else {
+                subBox.textContent = '';
+                subBox.style.display = 'none';
+            }
+
+            requestAnimationFrame(updateTimeline);
+        }
+        requestAnimationFrame(updateTimeline);
+    </script>
+</body>
+</html>

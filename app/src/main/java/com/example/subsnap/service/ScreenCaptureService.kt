@@ -34,6 +34,7 @@ import com.example.subsnap.MainActivity
 import com.example.subsnap.data.ScreenshotStorage
 import com.example.subsnap.data.SettingsRepository
 import com.example.subsnap.ocr.OcrSubtitleDetector
+import com.example.subsnap.ocr.SubtitleBandDiffDetector
 import com.example.subsnap.overlay.OverlayManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +65,7 @@ class ScreenCaptureService : Service() {
     private lateinit var screenshotStorage: ScreenshotStorage
     private lateinit var settingsRepository: SettingsRepository
     private val ocrDetector = OcrSubtitleDetector.getInstance()
+    private val diffDetector = SubtitleBandDiffDetector()
     private var overlayManager: OverlayManager? = null
     private var displayManager: DisplayManager? = null
 
@@ -296,51 +298,57 @@ class ScreenCaptureService : Service() {
 
     private var lastDetectedSubtitleText = ""
 
-    fun captureAndSave(isAutoMode: Boolean = false, onFinished: ((Boolean) -> Unit)? = null) {
-        serviceScope.launch {
-            val bitmap = acquireLatestBitmap()
-            if (bitmap != null) {
-                val shouldFilter = isAutoMode && settingsRepository.filterEmptyScreenshots.value
-                if (shouldFilter) {
-                    val region = settingsRepository.ocrRegion.value
-                    val ocrResult = ocrDetector.detectSubtitles(bitmap, region)
-                    if (!ocrResult.hasSubtitles) {
-                        Log.d(TAG, "Auto-capture: No English subtitles detected in frame, skipping save.")
-                        bitmap.recycle()
-                        onFinished?.invoke(false)
-                        return@launch
-                    }
-
-                    // Duplicate subtitle filtering
-                    if (settingsRepository.skipDuplicateSubtitles.value && lastDetectedSubtitleText.isNotBlank()) {
-                        if (ocrDetector.isDuplicate(lastDetectedSubtitleText, ocrResult.detectedText)) {
-                            Log.d(TAG, "Auto-capture: Duplicate subtitle frame detected, skipping save.")
-                            bitmap.recycle()
-                            onFinished?.invoke(false)
-                            return@launch
-                        }
-                    }
-                    lastDetectedSubtitleText = ocrResult.detectedText
-                    Log.d(TAG, "Auto-capture: Subtitles detected (${ocrResult.englishWordCount} English words). Saving frame.")
-                }
-
-                triggerHapticFeedback()
-                screenshotStorage.saveScreenshot(bitmap)
-                bitmap.recycle()
-                overlayManager?.onCaptureSuccess()
-                _serviceState.update {
-                    it.copy(
-                        capturedCount = it.capturedCount + 1,
-                        lastCaptureTimestamp = System.currentTimeMillis()
-                    )
-                }
-                onFinished?.invoke(true)
-            } else {
-                if (!isAutoMode) {
+    suspend fun executeCapture(isAutoMode: Boolean = false): Boolean {
+        val bitmap = acquireLatestBitmap() ?: run {
+            if (!isAutoMode) {
+                withContext(Dispatchers.Main) {
                     Toast.makeText(this@ScreenCaptureService, "Не удалось захватить кадр (попробуйте еще раз)", Toast.LENGTH_SHORT).show()
                 }
-                onFinished?.invoke(false)
             }
+            return false
+        }
+
+        val shouldFilter = isAutoMode && settingsRepository.filterEmptyScreenshots.value
+        if (shouldFilter) {
+            val region = settingsRepository.ocrRegion.value
+            val ocrResult = ocrDetector.detectSubtitles(bitmap, region)
+            if (!ocrResult.hasSubtitles) {
+                Log.d(TAG, "Auto-capture: No English subtitles detected in frame, skipping save.")
+                bitmap.recycle()
+                return false
+            }
+
+            // Duplicate subtitle filtering
+            if (settingsRepository.skipDuplicateSubtitles.value && lastDetectedSubtitleText.isNotBlank()) {
+                if (ocrDetector.isDuplicate(lastDetectedSubtitleText, ocrResult.detectedText)) {
+                    Log.d(TAG, "Auto-capture: Duplicate subtitle frame detected, skipping save.")
+                    bitmap.recycle()
+                    return false
+                }
+            }
+            lastDetectedSubtitleText = ocrResult.detectedText
+            Log.d(TAG, "Auto-capture: Subtitles detected (${ocrResult.englishWordCount} English words). Saving frame.")
+        }
+
+        triggerHapticFeedback()
+        screenshotStorage.saveScreenshot(bitmap)
+        bitmap.recycle()
+        withContext(Dispatchers.Main) {
+            overlayManager?.onCaptureSuccess()
+        }
+        _serviceState.update {
+            it.copy(
+                capturedCount = it.capturedCount + 1,
+                lastCaptureTimestamp = System.currentTimeMillis()
+            )
+        }
+        return true
+    }
+
+    fun captureAndSave(isAutoMode: Boolean = false, onFinished: ((Boolean) -> Unit)? = null) {
+        serviceScope.launch {
+            val result = executeCapture(isAutoMode)
+            onFinished?.invoke(result)
         }
     }
 
@@ -425,17 +433,108 @@ class ScreenCaptureService : Service() {
         _serviceState.update { it.copy(isAutoCapture = true) }
         overlayManager?.updateAutoCaptureState(true)
 
+        val isSmart = settingsRepository.smartDetectionEnabled.value
         val intervalSec = settingsRepository.autoCaptureIntervalSec.value
-        val intervalMs = (intervalSec * 1000).toLong().coerceIn(1000L, 15000L)
-        updateNotification("Авто-захват включен (каждые ${String.format(java.util.Locale.US, "%.1f", intervalSec)} сек)")
+        if (isSmart) {
+            updateNotification("Умный авто-захват: слежение за появлением субтитров")
+        } else {
+            updateNotification("Авто-захват включен (каждые ${String.format(java.util.Locale.US, "%.1f", intervalSec)} сек)")
+        }
 
-        autoCaptureJob = serviceScope.launch {
+        diffDetector.reset()
+
+        autoCaptureJob = serviceScope.launch(Dispatchers.Default) {
+            var lastCaptureTimestamp = 0L
+            val minCaptureCooldownMs = 1200L
+
             while (_serviceState.value.isAutoCapture) {
-                val currentIntervalSec = settingsRepository.autoCaptureIntervalSec.value
-                val delayMs = (currentIntervalSec * 1000).toLong().coerceIn(1000L, 15000L)
-                delay(delayMs)
-                if (_serviceState.value.isAutoCapture) {
-                    captureAndSave(isAutoMode = true)
+                val smartMode = settingsRepository.smartDetectionEnabled.value
+                if (!smartMode) {
+                    val currentIntervalSec = settingsRepository.autoCaptureIntervalSec.value
+                    val delayMs = (currentIntervalSec * 1000).toLong().coerceIn(1000L, 15000L)
+                    delay(delayMs)
+                    if (_serviceState.value.isAutoCapture) {
+                        executeCapture(isAutoMode = true)
+                    }
+                    continue
+                }
+
+                // Stage 1: Ultra-lightweight Subtitle Band Sampling (~200ms delay)
+                delay(200L)
+                if (!_serviceState.value.isAutoCapture) break
+
+                val region = settingsRepository.ocrRegion.value
+                val bandTop = if (region == "FULL_SCREEN") 0.40f else 0.68f
+                val bandBottom = 0.95f
+
+                val now = System.currentTimeMillis()
+                if (now - lastCaptureTimestamp < minCaptureCooldownMs) {
+                    // In cooldown period: update baseline to match ongoing video/subtitles
+                    val reader = imageReader
+                    if (reader != null) {
+                        val cooldownImage = try { reader.acquireLatestImage() } catch (e: Exception) { null }
+                        if (cooldownImage != null) {
+                            try {
+                                val luma = diffDetector.sampleFromImage(cooldownImage, screenWidth, screenHeight, bandTop, bandBottom)
+                                diffDetector.updateBaseline(luma)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Error updating cooldown baseline", e)
+                            } finally {
+                                cooldownImage.close()
+                            }
+                        }
+                    }
+                    continue
+                }
+
+                val reader = imageReader ?: continue
+                val image = try { reader.acquireLatestImage() } catch (e: Exception) { null } ?: continue
+                var isSignificant = false
+                var currentLuminance: IntArray? = null
+
+                try {
+                    currentLuminance = diffDetector.sampleFromImage(image, screenWidth, screenHeight, bandTop, bandBottom)
+                    val diffResult = diffDetector.compare(currentLuminance)
+                    isSignificant = diffResult.isSignificantChange
+                    if (!isSignificant) {
+                        // Smoothly adapt baseline to gradual background changes
+                        diffDetector.updateBaseline(currentLuminance)
+                    } else {
+                        Log.d(TAG, "SmartDetector: Subtitle band change detected (delta=%.2f, ratio=%.3f). Debouncing 300ms...".format(
+                            java.util.Locale.US, diffResult.meanLuminanceDelta, diffResult.changedFraction
+                        ))
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in Stage 1 diff detection", e)
+                } finally {
+                    image.close()
+                }
+
+                if (isSignificant && _serviceState.value.isAutoCapture) {
+                    // Stage 2: Debounce 300ms for text rendering/animation to settle
+                    delay(300L)
+                    if (!_serviceState.value.isAutoCapture) break
+
+                    val captured = executeCapture(isAutoMode = true)
+
+                    // Resynchronize baseline to the settled frame
+                    val postImage = try { imageReader?.acquireLatestImage() } catch (e: Exception) { null }
+                    if (postImage != null) {
+                        try {
+                            val postLuma = diffDetector.sampleFromImage(postImage, screenWidth, screenHeight, bandTop, bandBottom)
+                            diffDetector.updateBaseline(postLuma)
+                        } catch (e: Exception) {
+                            // ignore
+                        } finally {
+                            postImage.close()
+                        }
+                    } else if (currentLuminance != null) {
+                        diffDetector.updateBaseline(currentLuminance)
+                    }
+
+                    if (captured) {
+                        lastCaptureTimestamp = System.currentTimeMillis()
+                    }
                 }
             }
         }
@@ -444,6 +543,7 @@ class ScreenCaptureService : Service() {
     private fun stopAutoCapture() {
         autoCaptureJob?.cancel()
         autoCaptureJob = null
+        diffDetector.reset()
         _serviceState.update { it.copy(isAutoCapture = false) }
         overlayManager?.updateAutoCaptureState(false)
         updateNotification("Авто-захват выключен. Ручной режим.")

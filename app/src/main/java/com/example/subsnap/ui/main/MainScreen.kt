@@ -176,6 +176,7 @@ fun MainScreen(
     val skipDuplicateSubtitles by viewModel.skipDuplicateSubtitles.collectAsStateWithLifecycle()
     val autoCaptureIntervalSec by viewModel.autoCaptureIntervalSec.collectAsStateWithLifecycle()
     val autoStartAutoCapture by viewModel.autoStartAutoCapture.collectAsStateWithLifecycle()
+    val smartDetectionEnabled by viewModel.smartDetectionEnabled.collectAsStateWithLifecycle()
     val releasesHistory by viewModel.releasesHistory.collectAsStateWithLifecycle()
     val versionDiff by viewModel.versionDiff.collectAsStateWithLifecycle()
     val isLoadingHistory by viewModel.isLoadingHistory.collectAsStateWithLifecycle()
@@ -366,6 +367,7 @@ fun MainScreen(
                         hasNotification = hasNotificationPermission,
                         serviceState = serviceState,
                         autoCaptureInterval = autoCaptureIntervalSec,
+                        isSmartDetection = smartDetectionEnabled,
                         onToggleAutoCapture = { viewModel.toggleAutoCapture() },
                         onRequestOverlay = {
                             val intent = Intent(
@@ -764,6 +766,7 @@ fun MainScreen(
             currentSkipDuplicates = skipDuplicateSubtitles,
             currentAutoCaptureInterval = autoCaptureIntervalSec,
             currentAutoStartAutoCapture = autoStartAutoCapture,
+            currentSmartDetection = smartDetectionEnabled,
             isCheckingUpdate = isCheckingUpdate,
             onOpenReleaseHistory = {
                 showReleaseHistoryDialog = true
@@ -773,7 +776,7 @@ fun MainScreen(
                 ttsHelper.speak("Hello! This is a pronunciation test for SubSnap.", speed, locale)
             },
             onCheckForUpdates = { viewModel.checkForUpdates(userInitiated = true) },
-            onSave = { newKey, newModel, newFilterEmpty, newRepo, newTtsSpeed, newTtsLocale, newOcrRegion, newSkipDuplicates, newInterval, newAutoStart ->
+            onSave = { newKey, newModel, newFilterEmpty, newRepo, newTtsSpeed, newTtsLocale, newOcrRegion, newSkipDuplicates, newInterval, newAutoStart, newSmartDetection ->
                 viewModel.setApiKey(newKey)
                 viewModel.setSelectedModel(newModel)
                 viewModel.setFilterEmptyScreenshots(newFilterEmpty)
@@ -784,6 +787,7 @@ fun MainScreen(
                 viewModel.setSkipDuplicateSubtitles(newSkipDuplicates)
                 viewModel.setAutoCaptureIntervalSec(newInterval)
                 viewModel.setAutoStartAutoCapture(newAutoStart)
+                viewModel.setSmartDetectionEnabled(newSmartDetection)
                 showSettingsDialog = false
                 Toast.makeText(context, "Настройки сохранены", Toast.LENGTH_SHORT).show()
             },
@@ -1414,6 +1418,7 @@ fun SettingsDialog(
     currentSkipDuplicates: Boolean,
     currentAutoCaptureInterval: Float,
     currentAutoStartAutoCapture: Boolean,
+    currentSmartDetection: Boolean,
     isCheckingUpdate: Boolean,
     onOpenReleaseHistory: () -> Unit,
     onTestTts: (Float, String) -> Unit,
@@ -1428,7 +1433,8 @@ fun SettingsDialog(
         ocrRegion: String,
         skipDuplicates: Boolean,
         autoCaptureInterval: Float,
-        autoStartAutoCapture: Boolean
+        autoStartAutoCapture: Boolean,
+        smartDetection: Boolean
     ) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1442,6 +1448,7 @@ fun SettingsDialog(
     var skipDuplicates by remember { mutableStateOf(currentSkipDuplicates) }
     var autoCaptureInterval by remember { mutableStateOf(currentAutoCaptureInterval) }
     var autoStartAutoCapture by remember { mutableStateOf(currentAutoStartAutoCapture) }
+    var smartDetection by remember { mutableStateOf(currentSmartDetection) }
     var isModelDropdownExpanded by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1627,6 +1634,50 @@ fun SettingsDialog(
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
+
+                // Smart Subtitle Detection Switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Умный детектор субтитров",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "Stage 1 diff",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = if (smartDetection)
+                                "⚡ Анализирует полосу субтитров (<0.1 мс CPU). OCR запускается только в момент появления нового текста."
+                            else
+                                "Выключен. Используется периодический опрос по таймеру ниже.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = smartDetection,
+                        onCheckedChange = { smartDetection = it }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1839,7 +1890,8 @@ fun SettingsDialog(
                                 ocrRegion,
                                 skipDuplicates,
                                 autoCaptureInterval,
-                                autoStartAutoCapture
+                                autoStartAutoCapture,
+                                smartDetection
                             )
                         },
                         modifier = Modifier.weight(1f)
@@ -2729,6 +2781,7 @@ fun ControlPanelCard(
     hasNotification: Boolean,
     serviceState: ScreenCaptureService.Companion.ServiceState,
     autoCaptureInterval: Float,
+    isSmartDetection: Boolean = true,
     onToggleAutoCapture: () -> Unit,
     onRequestOverlay: () -> Unit,
     onRequestNotification: () -> Unit,
@@ -2842,10 +2895,14 @@ fun ControlPanelCard(
                             }
                         }
                         Text(
-                            text = if (serviceState.isAutoCapture)
-                                "Сканирует экран каждые ${String.format(java.util.Locale.US, "%.1f", autoCaptureInterval)}с (ML Kit фильтр)"
-                            else
-                                "Кадры делаются по нажатию на плавающую кнопку",
+                            text = if (serviceState.isAutoCapture) {
+                                if (isSmartDetection)
+                                    "⚡ Умный детектор субтитров (захват только при появлении нового текста)"
+                                else
+                                    "Сканирует экран каждые ${String.format(java.util.Locale.US, "%.1f", autoCaptureInterval)}с"
+                            } else {
+                                "Кадры делаются по нажатию на плавающую кнопку"
+                            },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -52,6 +52,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     val skipDuplicateSubtitles: StateFlow<Boolean> = settingsRepository.skipDuplicateSubtitles
     val autoCaptureIntervalSec: StateFlow<Float> = settingsRepository.autoCaptureIntervalSec
     val autoStartAutoCapture: StateFlow<Boolean> = settingsRepository.autoStartAutoCapture
+    val smartDetectionEnabled: StateFlow<Boolean> = settingsRepository.smartDetectionEnabled
 
     private val _releasesHistory = MutableStateFlow<List<AppReleaseRecord>>(emptyList())
     val releasesHistory: StateFlow<List<AppReleaseRecord>> = _releasesHistory.asStateFlow()
@@ -293,6 +294,10 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setAutoStartAutoCapture(enabled: Boolean) {
         settingsRepository.setAutoStartAutoCapture(enabled)
+    }
+
+    fun setSmartDetectionEnabled(enabled: Boolean) {
+        settingsRepository.setSmartDetectionEnabled(enabled)
     }
 
     fun toggleAutoCapture() {
