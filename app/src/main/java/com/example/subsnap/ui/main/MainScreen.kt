@@ -450,7 +450,7 @@ fun MainScreen(
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column {
                                         Text(
-                                            text = if (dueCards.isNotEmpty()) "Повторение: ${dueCards.size} карточек" else "Все карточки повторены!",
+                                            text = if (dueCards.isNotEmpty()) "Повторение: ${com.example.subsnap.data.SpacedRepetition.formatCardsCount(dueCards.size)}" else "Все карточки повторены!",
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 14.sp,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer

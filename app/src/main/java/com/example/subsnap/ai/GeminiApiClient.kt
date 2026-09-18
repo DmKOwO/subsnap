@@ -150,12 +150,26 @@ class GeminiApiClient(private val context: Context) {
                 .getJSONArray("parts")
             val rawJsonOutput = parts.getJSONObject(0).getString("text")
 
-            val cardJson = JSONObject(rawJsonOutput)
+            val cleanedJson = cleanJsonOutput(rawJsonOutput)
+            val cardJson = JSONObject(cleanedJson)
+
+            val sentence = cardJson.optString("sentence", "").trim()
+            val targetWord = cardJson.optString("target_word", "").trim()
+
+            if (sentence.equals("No subtitles found", ignoreCase = true) ||
+                targetWord.equals("None", ignoreCase = true) ||
+                sentence.isBlank() || targetWord.isBlank()
+            ) {
+                return@withContext Result.failure(
+                    IllegalStateException("Субтитры на кадре не найдены. Попробуйте захватить другой кадр видео.")
+                )
+            }
+
             val card = AnkiCard(
                 id = "card_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}",
                 screenshotFile = screenshotFile,
-                sentence = cardJson.optString("sentence", "").trim(),
-                targetWord = cardJson.optString("target_word", "").trim(),
+                sentence = sentence,
+                targetWord = targetWord,
                 transcription = cardJson.optString("transcription", "").trim(),
                 wordTranslation = cardJson.optString("word_translation", "").trim(),
                 sentenceTranslation = cardJson.optString("sentence_translation", "").trim(),
@@ -172,6 +186,20 @@ class GeminiApiClient(private val context: Context) {
 
     companion object {
         private const val TAG = "GeminiApiClient"
+
+        fun cleanJsonOutput(raw: String): String {
+            var text = raw.trim()
+            if (text.startsWith("```")) {
+                text = text.removePrefix("```json")
+                    .removePrefix("```JSON")
+                    .removePrefix("```")
+                    .trim()
+            }
+            if (text.endsWith("```")) {
+                text = text.removeSuffix("```").trim()
+            }
+            return text
+        }
 
         @Volatile
         private var instance: GeminiApiClient? = null

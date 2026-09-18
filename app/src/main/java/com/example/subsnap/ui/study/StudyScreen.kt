@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -105,6 +106,7 @@ fun StudyScreen(
     var sessionCompleted by remember { mutableStateOf(false) }
     var reviewedCount by remember { mutableIntStateOf(0) }
     var againCount by remember { mutableIntStateOf(0) }
+    var hardCount by remember { mutableIntStateOf(0) }
     var goodCount by remember { mutableIntStateOf(0) }
     var easyCount by remember { mutableIntStateOf(0) }
 
@@ -157,6 +159,7 @@ fun StudyScreen(
                 StudyCompletedScreen(
                     totalReviewed = reviewedCount,
                     againCount = againCount,
+                    hardCount = hardCount,
                     goodCount = goodCount,
                     easyCount = easyCount,
                     onRestart = {
@@ -167,6 +170,7 @@ fun StudyScreen(
                         sessionCompleted = false
                         reviewedCount = 0
                         againCount = 0
+                        hardCount = 0
                         goodCount = 0
                         easyCount = 0
                     },
@@ -257,7 +261,7 @@ fun StudyScreen(
                                         // Re-queue card in current session to review again
                                         studyQueue.add(updated)
                                     }
-                                    ReviewRating.HARD -> goodCount++
+                                    ReviewRating.HARD -> hardCount++
                                     ReviewRating.GOOD -> goodCount++
                                     ReviewRating.EASY -> easyCount++
                                 }
@@ -593,11 +597,12 @@ fun RatingButtonItem(
         onClick = onClick,
         modifier = modifier.height(56.dp),
         shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = containerColor, contentColor = contentColor)
+        colors = ButtonDefaults.buttonColors(containerColor = containerColor, contentColor = contentColor),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(text = title, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Text(text = subtitle, fontSize = 10.sp, color = contentColor.copy(alpha = 0.85f))
+            Text(text = title, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(text = subtitle, fontSize = 10.sp, color = contentColor.copy(alpha = 0.85f), maxLines = 1)
         }
     }
 }
@@ -606,6 +611,7 @@ fun RatingButtonItem(
 fun StudyCompletedScreen(
     totalReviewed: Int,
     againCount: Int,
+    hardCount: Int,
     goodCount: Int,
     easyCount: Int,
     onRestart: () -> Unit,
@@ -653,9 +659,10 @@ fun StudyCompletedScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    StatRow("Всего повторений", "$totalReviewed")
+                    StatRow("Всего ответов", "$totalReviewed")
                     StatRow("Снова (повторено)", "$againCount")
-                    StatRow("Хорошо / Трудно", "$goodCount")
+                    StatRow("Трудно", "$hardCount")
+                    StatRow("Хорошо", "$goodCount")
                     StatRow("Легко", "$easyCount")
                 }
             }

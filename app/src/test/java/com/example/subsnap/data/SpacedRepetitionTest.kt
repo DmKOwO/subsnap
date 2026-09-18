@@ -107,4 +107,18 @@ class SpacedRepetitionTest {
         assertEquals("1 дн", SpacedRepetition.formatIntervalPreview(newCard, ReviewRating.GOOD))
         assertEquals("4 дн", SpacedRepetition.formatIntervalPreview(newCard, ReviewRating.EASY))
     }
+
+    @Test
+    fun formatCardsCount_formatsRussianPluralizationCorrectly() {
+        assertEquals("0 карточек", SpacedRepetition.formatCardsCount(0))
+        assertEquals("1 карточка", SpacedRepetition.formatCardsCount(1))
+        assertEquals("2 карточки", SpacedRepetition.formatCardsCount(2))
+        assertEquals("4 карточки", SpacedRepetition.formatCardsCount(4))
+        assertEquals("5 карточек", SpacedRepetition.formatCardsCount(5))
+        assertEquals("11 карточек", SpacedRepetition.formatCardsCount(11))
+        assertEquals("14 карточек", SpacedRepetition.formatCardsCount(14))
+        assertEquals("21 карточка", SpacedRepetition.formatCardsCount(21))
+        assertEquals("22 карточки", SpacedRepetition.formatCardsCount(22))
+        assertEquals("25 карточек", SpacedRepetition.formatCardsCount(25))
+    }
 }

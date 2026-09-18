@@ -113,4 +113,19 @@ object SpacedRepetition {
     fun getDueCards(cards: List<AnkiCard>, currentTimeMillis: Long = System.currentTimeMillis()): List<AnkiCard> {
         return cards.filter { isDue(it, currentTimeMillis) }
     }
+
+    /**
+     * Formats card count according to Russian pluralization rules:
+     * 1 карточка, 2 карточки, 5 карточек, 11 карточек, 21 карточка, etc.
+     */
+    fun formatCardsCount(count: Int): String {
+        val rem100 = count % 100
+        val rem10 = count % 10
+        return when {
+            rem100 in 11..19 -> "$count карточек"
+            rem10 == 1 -> "$count карточка"
+            rem10 in 2..4 -> "$count карточки"
+            else -> "$count карточек"
+        }
+    }
 }

@@ -78,5 +78,25 @@ class AnkiCardTest {
 
         val tenDays = newCard.copy(repetitions = 3, intervalDays = 10, lastReviewedTimestamp = 1000L)
         assertEquals("10 дней", tenDays.intervalStatusText)
+
+        val twentyOneDays = newCard.copy(repetitions = 4, intervalDays = 21, lastReviewedTimestamp = 1000L)
+        assertEquals("21 день", twentyOneDays.intervalStatusText)
+
+        val twentyTwoDays = newCard.copy(repetitions = 5, intervalDays = 22, lastReviewedTimestamp = 1000L)
+        assertEquals("22 дня", twentyTwoDays.intervalStatusText)
+
+        val twentyFiveDays = newCard.copy(repetitions = 6, intervalDays = 25, lastReviewedTimestamp = 1000L)
+        assertEquals("25 дней", twentyFiveDays.intervalStatusText)
+    }
+
+    @Test
+    fun cleanJsonOutput_stripsMarkdownCodeBlocks() {
+        val rawWithFence = "```json\n{\"sentence\": \"Hello world\", \"target_word\": \"world\"}\n```"
+        val cleaned = com.example.subsnap.ai.GeminiApiClient.cleanJsonOutput(rawWithFence)
+        assertEquals("{\"sentence\": \"Hello world\", \"target_word\": \"world\"}", cleaned)
+
+        val rawWithGenericFence = "```\n{\"sentence\": \"Hello\"}\n```"
+        val cleanedGeneric = com.example.subsnap.ai.GeminiApiClient.cleanJsonOutput(rawWithGenericFence)
+        assertEquals("{\"sentence\": \"Hello\"}", cleanedGeneric)
     }
 }

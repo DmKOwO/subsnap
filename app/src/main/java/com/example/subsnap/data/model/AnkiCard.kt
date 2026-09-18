@@ -38,9 +38,16 @@ data class AnkiCard(
         get() = when {
             isNew -> "Новая"
             intervalDays == 0 -> "Снова"
-            intervalDays == 1 -> "1 день"
-            intervalDays in 2..4 -> "$intervalDays дня"
-            else -> "$intervalDays дней"
+            else -> {
+                val rem100 = intervalDays % 100
+                val rem10 = intervalDays % 10
+                when {
+                    rem100 in 11..19 -> "$intervalDays дней"
+                    rem10 == 1 -> "$intervalDays день"
+                    rem10 in 2..4 -> "$intervalDays дня"
+                    else -> "$intervalDays дней"
+                }
+            }
         }
 
     /**
