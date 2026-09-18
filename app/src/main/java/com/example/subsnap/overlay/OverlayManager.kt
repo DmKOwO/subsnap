@@ -16,6 +16,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.OvershootInterpolator
@@ -110,6 +111,15 @@ class OverlayManager(
             }
         }
         rootLayout = null
+    }
+
+    /**
+     * Temporarily sets the overlay alpha to 0 so manual screenshots never have the floating bubble in the captured frame!
+     */
+    fun setStealthMode(stealth: Boolean) {
+        mainHandler.post {
+            rootLayout?.alpha = if (stealth) 0f else 1f
+        }
     }
 
     fun updateAutoCaptureState(enabled: Boolean) {
@@ -357,6 +367,8 @@ class OverlayManager(
             }
         }
 
+        val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
         view.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -374,7 +386,7 @@ class OverlayManager(
                     val deltaX = (event.rawX - initialTouchX).toInt()
                     val deltaY = (event.rawY - initialTouchY).toInt()
 
-                    if (Math.abs(deltaX) > 16 || Math.abs(deltaY) > 16) {
+                    if (Math.abs(deltaX) > touchSlop || Math.abs(deltaY) > touchSlop) {
                         isDragging = true
                         isLongPressTriggered = false
                         mainHandler.removeCallbacks(longPressRunnable)

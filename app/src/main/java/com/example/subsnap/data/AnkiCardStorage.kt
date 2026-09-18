@@ -147,16 +147,18 @@ class AnkiCardStorage(private val context: Context) {
     }
 
     /**
-     * Exports all cards to a standard Anki TSV file ready to import in Anki / AnkiDroid.
+     * Exports cards to a standard Anki TSV file ready to import in Anki / AnkiDroid.
+     * Optionally takes a filtered card subset.
      */
-    suspend fun exportToAnkiFile(): File = withContext(Dispatchers.IO) {
+    suspend fun exportToAnkiFile(cardsToExport: List<AnkiCard>? = null): File = withContext(Dispatchers.IO) {
+        val list = cardsToExport ?: _cards.value
         val exportFile = File(exportsDir, "subsnap_anki_deck_${System.currentTimeMillis()}.txt")
         FileOutputStream(exportFile).bufferedWriter().use { writer ->
             writer.write("#separator:tab\n")
             writer.write("#html:true\n")
             writer.write("#tags column:3\n")
-            for (card in _cards.value) {
-                writer.write(card.toAnkiTsvRow() + "\n")
+            for (card in list) {
+                writer.write(card.toAnkiTsvRow(includeTagsColumn = true) + "\n")
             }
         }
         exportFile
@@ -183,7 +185,7 @@ class AnkiCardStorage(private val context: Context) {
 
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                val id = obj.optString("id", "imported_${UUID.randomUUID().toString().take(8)}")
+                val id = obj.optString("id").takeIf { it.isNotBlank() } ?: "imported_${UUID.randomUUID().toString().take(8)}"
                 val imgPath = obj.optString("imagePath", "")
                 val imgFile = File(imgPath)
 

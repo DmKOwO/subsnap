@@ -385,7 +385,14 @@ class ScreenCaptureService : Service() {
 
     fun captureAndSave(isAutoMode: Boolean = false, onFinished: ((Boolean) -> Unit)? = null) {
         serviceScope.launch {
+            if (!isAutoMode) {
+                overlayManager?.setStealthMode(true)
+                delay(50L) // Allow display compositor to render clean frame without floating bubble
+            }
             val result = executeCapture(isAutoMode)
+            if (!isAutoMode) {
+                overlayManager?.setStealthMode(false)
+            }
             onFinished?.invoke(result)
         }
     }

@@ -91,6 +91,8 @@ import com.example.subsnap.data.ReviewRating
 import com.example.subsnap.data.SpacedRepetition
 import com.example.subsnap.data.model.AnkiCard
 import com.example.subsnap.tts.TtsHelper
+import com.example.subsnap.ui.main.CefrHelpers
+import com.example.subsnap.ui.main.FrequencyBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -491,6 +493,8 @@ fun CardFront(
                             )
                         }
                     }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    FrequencyBadge(tier = card.frequencyTier)
                 }
 
                 IconButton(onClick = onToggleFavorite, modifier = Modifier.size(28.dp)) {
@@ -556,11 +560,10 @@ fun CardFront(
             } else {
                 val annotatedSentence = buildAnnotatedString {
                     val full = card.sentence
-                    val target = card.targetWord.trim()
-                    val idx = if (target.isNotBlank()) full.indexOf(target, ignoreCase = true) else -1
+                    val range = CefrHelpers.findWordRange(full, card.targetWord)
 
-                    if (idx >= 0) {
-                        append(full.substring(0, idx))
+                    if (range != null) {
+                        append(full.substring(0, range.first))
                         withStyle(
                             SpanStyle(
                                 color = MaterialTheme.colorScheme.primary,
@@ -568,9 +571,9 @@ fun CardFront(
                                 fontSize = 20.sp
                             )
                         ) {
-                            append(full.substring(idx, idx + target.length))
+                            append(full.substring(range.first, range.last + 1))
                         }
-                        append(full.substring(idx + target.length))
+                        append(full.substring(range.last + 1))
                     } else {
                         append(full)
                     }
@@ -664,6 +667,8 @@ fun CardBack(
                             )
                         }
                     }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    FrequencyBadge(tier = card.frequencyTier)
                     if (card.partOfSpeech.isNotBlank()) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Surface(

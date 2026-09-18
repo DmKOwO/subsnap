@@ -37,6 +37,62 @@ object CefrHelpers {
             else -> level.ifBlank { "CEFR" }
         }
     }
+
+    /**
+     * Estimates word frequency tier inspired by Yomitan / Migaku dictionaries.
+     */
+    fun getFrequencyTier(word: String, cefrLevel: String = ""): String {
+        val lvl = cefrLevel.uppercase().trim()
+        if (lvl == "A1") return "Top 1k"
+        if (lvl == "A2") return "Top 3k"
+        if (lvl == "B1") return "Top 5k"
+        if (lvl == "B2") return "Top 8k"
+        if (lvl == "C1") return "Top 15k"
+        if (lvl == "C2") return "Rare"
+
+        val len = word.trim().length
+        return when {
+            len <= 4 -> "Top 3k"
+            len <= 7 -> "Top 5k"
+            len <= 10 -> "Top 8k"
+            else -> "Rare"
+        }
+    }
+
+    /**
+     * Smart word boundary search:
+     * 1. Exact word with regex word boundaries (\b).
+     * 2. Inflected form matching (e.g. target "walk" matching "walking" or "walked").
+     * 3. Loose boundary fallback (surrounded by non-letters).
+     * Prevents false matches inside unrelated words (e.g. "cat" inside "Education").
+     */
+    fun findWordRange(sentence: String, targetWord: String): IntRange? {
+        val word = targetWord.trim()
+        if (word.isBlank() || sentence.isBlank()) return null
+
+        // 1. Exact word boundary
+        val exactRegex = Regex("\\b${Regex.escape(word)}\\b", RegexOption.IGNORE_CASE)
+        val exactMatch = exactRegex.find(sentence)
+        if (exactMatch != null) return exactMatch.range
+
+        // 2. Inflected form (prefix match with word boundary e.g. "walk" -> "walking", "walks", "walked")
+        if (word.length >= 3) {
+            val inflectedRegex = Regex("\\b${Regex.escape(word)}[a-zA-Z]*\\b", RegexOption.IGNORE_CASE)
+            val inflectedMatch = inflectedRegex.find(sentence)
+            if (inflectedMatch != null) return inflectedMatch.range
+        }
+
+        // 3. Fallback: boundary with non-letter characters or string boundaries
+        val looseRegex = Regex("(^|[^a-zA-Z])${Regex.escape(word)}([^a-zA-Z]|$)", RegexOption.IGNORE_CASE)
+        val looseMatch = looseRegex.find(sentence)
+        if (looseMatch != null) {
+            val offset = if (looseMatch.value.startsWith(word, ignoreCase = true)) 0 else 1
+            val start = looseMatch.range.first + offset
+            return start until (start + word.length)
+        }
+
+        return null
+    }
 }
 
 @Composable
@@ -56,6 +112,48 @@ fun CefrBadge(
             text = level.uppercase().trim(),
             color = color,
             fontSize = 10.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+fun FrequencyBadge(
+    tier: String,
+    modifier: Modifier = Modifier
+) {
+    if (tier.isBlank()) return
+    val isRare = tier.equals("Rare", ignoreCase = true)
+    val color = if (isRare) Color(0xFFE11D48) else Color(0xFF6366F1)
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(color.copy(alpha = 0.12f))
+            .padding(horizontal = 5.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = tier,
+            color = color,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+fun DuplicateBadge(
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFFEA580C).copy(alpha = 0.15f))
+            .padding(horizontal = 5.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = "В колоде",
+            color = Color(0xFFEA580C),
+            fontSize = 9.sp,
             fontWeight = FontWeight.Bold
         )
     }

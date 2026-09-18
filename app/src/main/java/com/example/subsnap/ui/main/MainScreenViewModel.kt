@@ -314,9 +314,21 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun exportDeck(onExported: (File) -> Unit) {
+    fun isWordDuplicate(targetWord: String, currentCardId: String? = null): Boolean {
+        val word = targetWord.trim()
+        if (word.isBlank()) return false
+        return cards.value.any { it.id != currentCardId && it.targetWord.equals(word, ignoreCase = true) }
+    }
+
+    fun resetFiltersAndSearch() {
+        _cardSearchQuery.value = ""
+        _cardFilter.value = CardFilterType.ALL
+    }
+
+    fun exportDeck(filteredOnly: Boolean = false, onExported: (File) -> Unit) {
         viewModelScope.launch {
-            val file = ankiCardStorage.exportToAnkiFile()
+            val list = if (filteredOnly) filteredCards.value else null
+            val file = ankiCardStorage.exportToAnkiFile(list)
             onExported(file)
         }
     }

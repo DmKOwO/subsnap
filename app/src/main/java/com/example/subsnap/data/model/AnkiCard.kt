@@ -49,15 +49,16 @@ data class AnkiCard(
     val computedClozeSentence: String
         get() {
             if (clozeSentence.isNotBlank()) return clozeSentence
-            val word = targetWord.trim()
-            if (word.isBlank()) return sentence
-            val idx = sentence.indexOf(word, ignoreCase = true)
-            return if (idx >= 0) {
-                sentence.substring(0, idx) + "[...]" + sentence.substring(idx + word.length)
+            val range = com.example.subsnap.ui.main.CefrHelpers.findWordRange(sentence, targetWord)
+            return if (range != null) {
+                sentence.substring(0, range.first) + "[...]" + sentence.substring(range.last + 1)
             } else {
                 sentence
             }
         }
+
+    val frequencyTier: String
+        get() = com.example.subsnap.ui.main.CefrHelpers.getFrequencyTier(targetWord, cefrLevel)
 
     val intervalStatusText: String
         get() = when {
@@ -79,8 +80,9 @@ data class AnkiCard(
      * Generates a TSV row compatible with Anki import.
      * Front: Sentence (with cloze option) + bold target word + image
      * Back: Word translation, transcription, sentence translation, context explanation, CEFR & tags
+     * Tags Column: Space-separated tags compatible with Anki '#tags column:3' header directive.
      */
-    fun toAnkiTsvRow(): String {
+    fun toAnkiTsvRow(includeTagsColumn: Boolean = true): String {
         val cleanSentence = sentence.replace("\t", " ").replace("\n", " ")
         val cleanSentenceTrans = sentenceTranslation.replace("\t", " ").replace("\n", " ")
         val cleanExplanation = explanation.replace("\t", " ").replace("\n", " ")
@@ -93,12 +95,14 @@ data class AnkiCard(
         val posBadge = if (partOfSpeech.isNotBlank()) " <small>[$partOfSpeech]</small>" else ""
         val cefrBadge = if (cefrLevel.isNotBlank()) " <small>[$cefrLevel]</small>" else ""
         val notesPart = if (cleanNotes.isNotBlank()) "<br><br><b>Заметки:</b> $cleanNotes" else ""
-        val tagsList = tags + (if (cefrLevel.isNotBlank()) listOf(cefrLevel) else emptyList())
-        val tagsPart = if (tagsList.isNotEmpty()) "<br><br><small>Теги: ${tagsList.joinToString(", ")}</small>" else ""
+
+        val rawTags = (tags + (if (cefrLevel.isNotBlank()) listOf("cefr_${cefrLevel.lowercase()}") else emptyList()) + listOf("subsnap"))
+        val cleanTags = rawTags.map { it.replace(" ", "_").replace("\t", "").replace("\n", "") }.distinct().joinToString(" ")
+        val tagsPart = if (cleanTags.isNotBlank()) "<br><br><small>Теги: $cleanTags</small>" else ""
 
         val front = "$cleanSentence<br><br>$imgTag"
         val back = "<b>$cleanTargetWord</b>$posBadge$cefrBadge <i>$cleanTranscription</i><br><b>Перевод:</b> $cleanWordTranslation<br><br><b>Предложение:</b> $cleanSentenceTrans<br><b>Контекст:</b> $cleanExplanation$notesPart$tagsPart"
 
-        return "$front\t$back"
+        return if (includeTagsColumn) "$front\t$back\t$cleanTags" else "$front\t$back"
     }
 }

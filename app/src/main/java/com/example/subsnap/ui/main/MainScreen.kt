@@ -65,7 +65,10 @@ import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.Sort
+import android.content.ClipData
+import android.content.ClipboardManager
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Timeline
@@ -513,9 +516,10 @@ fun MainScreen(
 
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             if (cards.isNotEmpty()) {
+                                val isFiltered = filteredCards.size != cards.size
                                 OutlinedButton(
                                     onClick = {
-                                        viewModel.exportDeck { exportFile ->
+                                        viewModel.exportDeck(filteredOnly = isFiltered) { exportFile ->
                                             shareExportFile(context, exportFile)
                                         }
                                     },
@@ -524,7 +528,7 @@ fun MainScreen(
                                 ) {
                                     Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Anki .txt", fontSize = 11.sp)
+                                    Text(if (isFiltered) "Anki (${filteredCards.size})" else "Anki .txt", fontSize = 11.sp)
                                 }
 
                                 OutlinedButton(
@@ -670,7 +674,7 @@ fun MainScreen(
                                         .size(48.dp)
                                         .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
                                 ) {
-                                    Icon(Icons.Default.Sort, contentDescription = "Сортировка", tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Сортировка", tint = MaterialTheme.colorScheme.primary)
                                 }
 
                                 DropdownMenu(
@@ -702,18 +706,50 @@ fun MainScreen(
                     if (cards.isEmpty()) {
                         EmptyCardsPlaceholder()
                     } else if (filteredCards.isEmpty()) {
-                        Box(
+                        Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center
+                                .padding(vertical = 20.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                         ) {
-                            Text(
-                                text = if (cardSearchQuery.isNotBlank()) "Ничего не найдено по запросу «$cardSearchQuery»" else "Нет карточек в выбранной категории",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                                fontSize = 13.sp
-                            )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(44.dp),
+                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = if (cardSearchQuery.isNotBlank()) "Ничего не найдено по запросу «$cardSearchQuery»" else "Нет карточек в выбранной категории",
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.SemiBold,
+                                    textAlign = TextAlign.Center,
+                                    fontSize = 14.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Попробуйте изменить запрос или сбросить фильтры",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                OutlinedButton(
+                                    onClick = { viewModel.resetFiltersAndSearch() },
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Сбросить фильтры и поиск")
+                                }
+                            }
                         }
                     } else {
                         LazyColumn(
@@ -722,8 +758,10 @@ fun MainScreen(
                             modifier = Modifier.fillMaxSize()
                         ) {
                             items(filteredCards, key = { it.id }) { card ->
+                                val isDuplicate = viewModel.isWordDuplicate(card.targetWord, card.id)
                                 AnkiCardItem(
                                     card = card,
+                                    isDuplicate = isDuplicate,
                                     onClick = { selectedCardForPreview = card },
                                     onDelete = { viewModel.deleteCard(card.id) },
                                     onTtsClick = { ttsHelper.speak(card.targetWord, ttsSpeed, ttsLocale) },
@@ -1181,6 +1219,7 @@ fun ScreenshotItemCard(
 @Composable
 fun AnkiCardItem(
     card: AnkiCard,
+    isDuplicate: Boolean = false,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onTtsClick: () -> Unit,
@@ -1227,10 +1266,10 @@ fun AnkiCardItem(
 
             // Text info
             Column(modifier = Modifier.weight(1f)) {
-                // Line 1: Word + CEFR badge
+                // Line 1: Word + CEFR badge + Frequency badge + Duplicate indicator
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Text(
                         text = card.targetWord,
@@ -1240,6 +1279,10 @@ fun AnkiCardItem(
                     )
                     if (card.cefrLevel.isNotBlank()) {
                         CefrBadge(level = card.cefrLevel)
+                    }
+                    FrequencyBadge(tier = card.frequencyTier)
+                    if (isDuplicate) {
+                        DuplicateBadge()
                     }
                 }
 
@@ -1277,7 +1320,7 @@ fun AnkiCardItem(
                 Text(
                     text = card.sentence,
                     fontSize = 12.sp,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1329,41 +1372,41 @@ fun AnkiCardItem(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Row {
-                    IconButton(onClick = onToggleFavorite, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = onToggleFavorite, modifier = Modifier.size(34.dp)) {
                         Icon(
                             if (card.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
                             contentDescription = "В избранное",
                             tint = if (card.isFavorite) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(19.dp)
                         )
                     }
 
-                    IconButton(onClick = onTtsClick, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = onTtsClick, modifier = Modifier.size(34.dp)) {
                         Icon(
                             Icons.AutoMirrored.Filled.VolumeUp,
                             contentDescription = "Озвучить слово",
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
 
                 Row {
-                    IconButton(onClick = onEditClick, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = onEditClick, modifier = Modifier.size(34.dp)) {
                         Icon(
                             Icons.Default.Edit,
                             contentDescription = "Редактировать",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(19.dp)
                         )
                     }
 
-                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
                         Icon(
                             Icons.Default.Delete,
                             contentDescription = "Удалить карточку",
                             tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
@@ -1546,6 +1589,7 @@ fun CardDetailDialog(
     onEdit: () -> Unit = {},
     onShare: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val bitmap = rememberFullBitmap(card.screenshotFile)
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1618,6 +1662,7 @@ fun CardDetailDialog(
                     if (card.cefrLevel.isNotBlank()) {
                         CefrBadge(level = card.cefrLevel)
                     }
+                    FrequencyBadge(tier = card.frequencyTier)
                     if (card.partOfSpeech.isNotBlank()) {
                         Text(text = card.partOfSpeech, fontSize = 13.sp, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.tertiary)
                     }
@@ -1638,6 +1683,41 @@ fun CardDetailDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(text = "Перевод: ${card.wordTranslation}", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+
+                // Quick copy buttons
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("SubSnap Word", card.targetWord))
+                            Toast.makeText(context, "Слово скопировано", Toast.LENGTH_SHORT).show()
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Слово", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("SubSnap Sentence", card.sentence))
+                            Toast.makeText(context, "Цитата скопирована", Toast.LENGTH_SHORT).show()
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Цитата", fontSize = 11.sp)
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
