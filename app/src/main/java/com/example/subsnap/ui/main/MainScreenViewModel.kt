@@ -3,19 +3,27 @@ package com.example.subsnap.ui.main
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.subsnap.BuildConfig
 import com.example.subsnap.ai.GeminiApiClient
 import com.example.subsnap.data.AnkiCardStorage
 import com.example.subsnap.data.CapturedScreenshot
 import com.example.subsnap.data.ScreenshotStorage
 import com.example.subsnap.data.SettingsRepository
 import com.example.subsnap.data.model.AnkiCard
+import com.example.subsnap.ocr.OcrSubtitleDetector
+import com.example.subsnap.ota.AppReleaseRecord
+import com.example.subsnap.ota.VersionDiff
 import com.example.subsnap.service.ScreenCaptureService
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import com.example.subsnap.ocr.OcrSubtitleDetector
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.Calendar
 
 class MainScreenViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -38,6 +46,48 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     val downloadState: StateFlow<com.example.subsnap.ota.GitHubUpdateManager.DownloadState> =
         updateManager.downloadState
 
+    val ttsSpeed: StateFlow<Float> = settingsRepository.ttsSpeed
+    val ttsLocale: StateFlow<String> = settingsRepository.ttsLocale
+    val ocrRegion: StateFlow<String> = settingsRepository.ocrRegion
+    val skipDuplicateSubtitles: StateFlow<Boolean> = settingsRepository.skipDuplicateSubtitles
+
+    private val _releasesHistory = MutableStateFlow<List<AppReleaseRecord>>(emptyList())
+    val releasesHistory: StateFlow<List<AppReleaseRecord>> = _releasesHistory.asStateFlow()
+
+    private val _versionDiff = MutableStateFlow<VersionDiff?>(null)
+    val versionDiff: StateFlow<VersionDiff?> = _versionDiff.asStateFlow()
+
+    private val _isLoadingHistory = MutableStateFlow(false)
+    val isLoadingHistory: StateFlow<Boolean> = _isLoadingHistory.asStateFlow()
+
+    private val _cardSearchQuery = MutableStateFlow("")
+    val cardSearchQuery: StateFlow<String> = _cardSearchQuery.asStateFlow()
+
+    val filteredCards: StateFlow<List<AnkiCard>> = combine(cards, _cardSearchQuery) { list, query ->
+        if (query.isBlank()) {
+            list
+        } else {
+            val q = query.trim().lowercase()
+            list.filter { card ->
+                card.targetWord.lowercase().contains(q) ||
+                card.wordTranslation.lowercase().contains(q) ||
+                card.sentence.lowercase().contains(q) ||
+                card.sentenceTranslation.lowercase().contains(q) ||
+                card.explanation.lowercase().contains(q)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val todayCardsCount: StateFlow<Int> = cards.map { list ->
+        val startOfDay = getStartOfDayMillis()
+        list.count { it.timestamp >= startOfDay }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val todayScreenshotsCount: StateFlow<Int> = screenshots.map { list ->
+        val startOfDay = getStartOfDayMillis()
+        list.count { it.timestamp >= startOfDay }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     private val _updateInfo = MutableStateFlow<com.example.subsnap.ota.AppUpdateInfo?>(null)
     val updateInfo: StateFlow<com.example.subsnap.ota.AppUpdateInfo?> = _updateInfo.asStateFlow()
 
@@ -58,6 +108,16 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _generatedCard = MutableStateFlow<AnkiCard?>(null)
     val generatedCard: StateFlow<AnkiCard?> = _generatedCard.asStateFlow()
+
+    private fun getStartOfDayMillis(): Long {
+        val calendar = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return calendar.timeInMillis
+    }
 
     fun refreshScreenshots() {
         screenshotStorage.refresh()
@@ -188,6 +248,41 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         _updateInfo.value = null
         _updateMessage.value = null
         updateManager.resetState()
+    }
+
+    fun setCardSearchQuery(query: String) {
+        _cardSearchQuery.value = query
+    }
+
+    fun loadReleaseHistory() {
+        viewModelScope.launch {
+            _isLoadingHistory.value = true
+            val result = updateManager.fetchAllReleases(settingsRepository.githubRepo.value)
+            result.onSuccess { list ->
+                _releasesHistory.value = list
+                val diff = updateManager.calculateVersionDiff(BuildConfig.VERSION_NAME, list)
+                _versionDiff.value = diff
+            }.onFailure { err ->
+                _updateMessage.value = "Ошибка загрузки истории релизов: ${err.message}"
+            }
+            _isLoadingHistory.value = false
+        }
+    }
+
+    fun setTtsSpeed(speed: Float) {
+        settingsRepository.setTtsSpeed(speed)
+    }
+
+    fun setTtsLocale(locale: String) {
+        settingsRepository.setTtsLocale(locale)
+    }
+
+    fun setOcrRegion(region: String) {
+        settingsRepository.setOcrRegion(region)
+    }
+
+    fun setSkipDuplicateSubtitles(skip: Boolean) {
+        settingsRepository.setSkipDuplicateSubtitles(skip)
     }
 
     fun setGithubRepo(repo: String) {

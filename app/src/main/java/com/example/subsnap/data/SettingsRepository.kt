@@ -27,6 +27,20 @@ class SettingsRepository(context: Context) {
     )
     val githubRepo: StateFlow<String> = _githubRepo.asStateFlow()
 
+    private val _ttsSpeed = MutableStateFlow(prefs.getFloat(KEY_TTS_SPEED, 1.0f))
+    val ttsSpeed: StateFlow<Float> = _ttsSpeed.asStateFlow()
+
+    private val _ttsLocale = MutableStateFlow(prefs.getString(KEY_TTS_LOCALE, "US") ?: "US")
+    val ttsLocale: StateFlow<String> = _ttsLocale.asStateFlow()
+
+    private val _ocrRegion = MutableStateFlow(prefs.getString(KEY_OCR_REGION, "LOWER_THIRD") ?: "LOWER_THIRD")
+    val ocrRegion: StateFlow<String> = _ocrRegion.asStateFlow()
+
+    private val _skipDuplicateSubtitles = MutableStateFlow(
+        prefs.getBoolean(KEY_SKIP_DUPLICATES, true)
+    )
+    val skipDuplicateSubtitles: StateFlow<Boolean> = _skipDuplicateSubtitles.asStateFlow()
+
     private fun getSanitizedModel(): String {
         val saved = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
         // Automatically migrate deprecated models (gemini-1.5, gemini-2.0, gemini-2.5, etc.) to gemini-3.8-flash
@@ -63,6 +77,29 @@ class SettingsRepository(context: Context) {
         _githubRepo.value = trimmed
     }
 
+    fun setTtsSpeed(speed: Float) {
+        val clamped = speed.coerceIn(0.7f, 1.5f)
+        prefs.edit().putFloat(KEY_TTS_SPEED, clamped).apply()
+        _ttsSpeed.value = clamped
+    }
+
+    fun setTtsLocale(locale: String) {
+        val normalized = if (locale.equals("UK", ignoreCase = true)) "UK" else "US"
+        prefs.edit().putString(KEY_TTS_LOCALE, normalized).apply()
+        _ttsLocale.value = normalized
+    }
+
+    fun setOcrRegion(region: String) {
+        val target = if (region.equals("FULL_SCREEN", ignoreCase = true)) "FULL_SCREEN" else "LOWER_THIRD"
+        prefs.edit().putString(KEY_OCR_REGION, target).apply()
+        _ocrRegion.value = target
+    }
+
+    fun setSkipDuplicateSubtitles(skip: Boolean) {
+        prefs.edit().putBoolean(KEY_SKIP_DUPLICATES, skip).apply()
+        _skipDuplicateSubtitles.value = skip
+    }
+
     val isConfigured: Boolean
         get() = _apiKey.value.isNotBlank()
 
@@ -71,6 +108,10 @@ class SettingsRepository(context: Context) {
         private const val KEY_MODEL = "gemini_model"
         private const val KEY_FILTER_EMPTY = "filter_empty_screenshots"
         private const val KEY_GITHUB_REPO = "github_repo"
+        private const val KEY_TTS_SPEED = "tts_speed"
+        private const val KEY_TTS_LOCALE = "tts_locale"
+        private const val KEY_OCR_REGION = "ocr_region"
+        private const val KEY_SKIP_DUPLICATES = "skip_duplicate_subtitles"
         const val DEFAULT_GITHUB_REPO = "DmKOwO/subsnap"
 
         // Updated for modern Gemini models in Google AI Studio

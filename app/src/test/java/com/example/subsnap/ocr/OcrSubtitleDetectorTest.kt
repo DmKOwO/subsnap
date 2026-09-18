@@ -67,4 +67,17 @@ class OcrSubtitleDetectorTest {
         assertEquals(0, result.englishWordCount)
         assertEquals("", result.detectedText)
     }
+
+    @Test
+    fun isDuplicate_detectsIdenticalOrMinorVariations() {
+        val line1 = "We have to run away right now!"
+        val line2 = "We have to run away right now."
+        assertTrue(detector.isDuplicate(line1, line2))
+
+        val line3 = "We have to run away right now immediately!"
+        assertTrue(detector.isDuplicate(line1, line3))
+
+        val different = "Where did everybody go today?"
+        assertFalse(detector.isDuplicate(line1, different))
+    }
 }

@@ -18,6 +18,9 @@ class TtsHelper(context: Context) {
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
+    private var currentSpeechRate = 0.95f
+    private var currentLocale = Locale.US
+
     init {
         tts = TextToSpeech(context.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -29,7 +32,7 @@ class TtsHelper(context: Context) {
                         tts?.setLanguage(Locale.ENGLISH)
                     }
                 }
-                tts?.setSpeechRate(0.92f) // Slightly slower rate for optimal learning clarity
+                tts?.setSpeechRate(currentSpeechRate)
                 tts?.setPitch(1.0f)
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
@@ -58,12 +61,32 @@ class TtsHelper(context: Context) {
         }
     }
 
-    fun speak(text: String) {
+    fun setSpeechRate(rate: Float) {
+        val clamped = rate.coerceIn(0.7f, 1.5f)
+        currentSpeechRate = clamped
+        tts?.setSpeechRate(clamped)
+    }
+
+    fun setAccent(accent: String) {
+        val targetLocale = if (accent.equals("UK", ignoreCase = true)) Locale.UK else Locale.US
+        currentLocale = targetLocale
+        tts?.let {
+            val res = it.setLanguage(targetLocale)
+            if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+                it.setLanguage(Locale.ENGLISH)
+            }
+        }
+    }
+
+    fun speak(text: String, rate: Float? = null, accent: String? = null) {
         if (text.isBlank()) return
         if (!isInitialized || tts == null) {
             Log.w(TAG, "TTS not yet initialized, speech requested: $text")
             return
         }
+
+        rate?.let { setSpeechRate(it) }
+        accent?.let { setAccent(it) }
 
         val utteranceId = "tts_${UUID.randomUUID()}"
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)

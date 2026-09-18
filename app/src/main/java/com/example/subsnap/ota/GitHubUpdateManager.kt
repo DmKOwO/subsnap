@@ -106,6 +106,95 @@ class GitHubUpdateManager(private val context: Context) {
         }
     }
 
+    suspend fun fetchAllReleases(repoSlug: String): Result<List<AppReleaseRecord>> = withContext(Dispatchers.IO) {
+        val cleanSlug = repoSlug.trim().trim('/')
+        if (cleanSlug.isBlank() || !cleanSlug.contains('/')) {
+            return@withContext Result.failure(
+                IllegalArgumentException("Укажите репозиторий GitHub в формате 'owner/repo' (например: DmKOwO/subsnap)")
+            )
+        }
+
+        val apiUrl = "https://api.github.com/repos/$cleanSlug/releases?per_page=20"
+        try {
+            val url = URL(apiUrl)
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("Accept", "application/vnd.github.v3+json")
+                setRequestProperty("User-Agent", "SubSnap-Android-App")
+                connectTimeout = 15000
+                readTimeout = 15000
+            }
+
+            val responseCode = conn.responseCode
+            if (responseCode == 404) {
+                return@withContext Result.failure(
+                    Exception("Релизов в репозитории $cleanSlug пока не найдено (404)")
+                )
+            } else if (responseCode !in 200..299) {
+                return@withContext Result.failure(
+                    Exception("Ошибка GitHub API ($responseCode)")
+                )
+            }
+
+            val responseBody = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8")).use { it.readText() }
+            val releasesArray = org.json.JSONArray(responseBody)
+            val currentVersion = BuildConfig.VERSION_NAME
+            val list = mutableListOf<AppReleaseRecord>()
+
+            for (i in 0 until releasesArray.length()) {
+                val rel = releasesArray.getJSONObject(i)
+                val tag = rel.optString("tag_name", "").trim()
+                val name = rel.optString("name", tag)
+                val body = rel.optString("body", "")
+                val publishedAt = rel.optString("published_at", "")
+                val htmlUrl = rel.optString("html_url", "https://github.com/$cleanSlug/releases/tag/$tag")
+
+                var apkUrl: String? = null
+                var apkSize = 0L
+                val assets = rel.optJSONArray("assets")
+                if (assets != null) {
+                    for (j in 0 until assets.length()) {
+                        val a = assets.getJSONObject(j)
+                        val aName = a.optString("name", "")
+                        if (aName.endsWith(".apk", ignoreCase = true)) {
+                            apkUrl = a.optString("browser_download_url").ifBlank { null }
+                            apkSize = a.optLong("size", 0L)
+                            break
+                        }
+                    }
+                }
+
+                val cleanTag = tag.removePrefix("v").removePrefix("V").trim()
+                val cleanCurrent = currentVersion.removePrefix("v").removePrefix("V").trim()
+                val isCurrent = cleanTag == cleanCurrent
+                val isNewer = isNewerVersion(tag, currentVersion)
+
+                list.add(
+                    AppReleaseRecord(
+                        tagName = tag,
+                        versionName = cleanTag,
+                        releaseName = name,
+                        changelog = body,
+                        publishedAt = publishedAt,
+                        htmlUrl = htmlUrl,
+                        apkDownloadUrl = apkUrl,
+                        apkSizeBytes = apkSize,
+                        isCurrent = isCurrent,
+                        isNewer = isNewer
+                    )
+                )
+            }
+
+            Result.success(list)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch releases history", e)
+            Result.failure(e)
+        }
+    }
+
+    fun calculateVersionDiff(currentVersion: String, releases: List<AppReleaseRecord>): VersionDiff =
+        Companion.calculateVersionDiff(currentVersion, releases)
+
     suspend fun downloadApk(downloadUrl: String): Result<File> = withContext(Dispatchers.IO) {
         _downloadState.value = DownloadState.Downloading(0)
         try {
@@ -220,6 +309,39 @@ class GitHubUpdateManager(private val context: Context) {
             return instance ?: synchronized(this) {
                 instance ?: GitHubUpdateManager(context.applicationContext).also { instance = it }
             }
+        }
+
+        fun calculateVersionDiff(currentVersion: String, releases: List<AppReleaseRecord>): VersionDiff {
+            val newerReleases = releases.filter { it.isNewer }
+            val latest = releases.firstOrNull()?.versionName ?: currentVersion
+            val hasUpdate = newerReleases.isNotEmpty()
+
+            val sb = StringBuilder()
+            if (newerReleases.isNotEmpty()) {
+                newerReleases.forEach { release ->
+                    val title = if (release.releaseName.isNotBlank() && release.releaseName != release.tagName) {
+                        "${release.releaseName} (${release.tagName})"
+                    } else {
+                        release.tagName
+                    }
+                    sb.append("### ").append(title).append("\n")
+                    if (release.changelog.isNotBlank()) {
+                        sb.append(release.changelog.trim()).append("\n\n")
+                    } else {
+                        sb.append("• Оптимизация и улучшение стабильности.\n\n")
+                    }
+                }
+            } else {
+                sb.append("У вас установлена актуальная версия SubSnap v").append(currentVersion).append(".\nВсе новейшие функции и улучшения уже доступны.")
+            }
+
+            return VersionDiff(
+                currentVersion = currentVersion,
+                latestVersion = latest,
+                hasUpdate = hasUpdate,
+                aggregatedChangelog = sb.toString().trim(),
+                newerReleasesCount = newerReleases.size
+            )
         }
 
         fun isNewerVersion(remoteTag: String, currentVersion: String): Boolean {

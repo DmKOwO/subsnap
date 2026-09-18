@@ -281,19 +281,33 @@ class ScreenCaptureService : Service() {
         overlayManager?.onConfigurationChanged(screenWidth, screenHeight)
     }
 
+    private var lastDetectedSubtitleText = ""
+
     fun captureAndSave(isAutoMode: Boolean = false, onFinished: ((Boolean) -> Unit)? = null) {
         serviceScope.launch {
             val bitmap = acquireLatestBitmap()
             if (bitmap != null) {
                 val shouldFilter = isAutoMode && settingsRepository.filterEmptyScreenshots.value
                 if (shouldFilter) {
-                    val ocrResult = ocrDetector.detectSubtitles(bitmap)
+                    val region = settingsRepository.ocrRegion.value
+                    val ocrResult = ocrDetector.detectSubtitles(bitmap, region)
                     if (!ocrResult.hasSubtitles) {
                         Log.d(TAG, "Auto-capture: No English subtitles detected in frame, skipping save.")
                         bitmap.recycle()
                         onFinished?.invoke(false)
                         return@launch
                     }
+
+                    // Duplicate subtitle filtering
+                    if (settingsRepository.skipDuplicateSubtitles.value && lastDetectedSubtitleText.isNotBlank()) {
+                        if (ocrDetector.isDuplicate(lastDetectedSubtitleText, ocrResult.detectedText)) {
+                            Log.d(TAG, "Auto-capture: Duplicate subtitle frame detected, skipping save.")
+                            bitmap.recycle()
+                            onFinished?.invoke(false)
+                            return@launch
+                        }
+                    }
+                    lastDetectedSubtitleText = ocrResult.detectedText
                     Log.d(TAG, "Auto-capture: Subtitles detected (${ocrResult.englishWordCount} English words). Saving frame.")
                 }
 
