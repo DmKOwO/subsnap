@@ -288,6 +288,7 @@ class ScreenCaptureService : Service() {
             vd.surface = newReader.surface
 
             oldReader?.close()
+            diffDetector.reset()
             Log.d(TAG, "VirtualDisplay successfully resized to ${screenWidth}x${screenHeight} @ ${screenDensity}dpi")
         } catch (e: Exception) {
             Log.e(TAG, "Error resizing VirtualDisplay on orientation change", e)
@@ -298,16 +299,38 @@ class ScreenCaptureService : Service() {
 
     private var lastDetectedSubtitleText = ""
 
-    suspend fun executeCapture(isAutoMode: Boolean = false): Boolean {
-        val bitmap = acquireLatestBitmap() ?: run {
-            if (!isAutoMode) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@ScreenCaptureService, "Не удалось захватить кадр (попробуйте еще раз)", Toast.LENGTH_SHORT).show()
-                }
-            }
-            return false
-        }
+    private fun imageToBitmap(image: Image): Bitmap? {
+        return try {
+            val plane = image.planes[0]
+            val buffer: ByteBuffer = plane.buffer
+            val pixelStride = plane.pixelStride
+            val rowStride = plane.rowStride
+            val imgWidth = image.width
+            val imgHeight = image.height
+            val rowPadding = rowStride - pixelStride * imgWidth
 
+            if (rowPadding == 0) {
+                val bitmap = Bitmap.createBitmap(imgWidth, imgHeight, Bitmap.Config.ARGB_8888)
+                bitmap.copyPixelsFromBuffer(buffer)
+                bitmap
+            } else {
+                val rawBitmap = Bitmap.createBitmap(
+                    imgWidth + rowPadding / pixelStride,
+                    imgHeight,
+                    Bitmap.Config.ARGB_8888
+                )
+                rawBitmap.copyPixelsFromBuffer(buffer)
+                val croppedBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, imgWidth, imgHeight)
+                rawBitmap.recycle()
+                croppedBitmap
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error converting Image to Bitmap", e)
+            null
+        }
+    }
+
+    private suspend fun processCapturedBitmap(bitmap: Bitmap, isAutoMode: Boolean): Boolean {
         val shouldFilter = isAutoMode && settingsRepository.filterEmptyScreenshots.value
         if (shouldFilter) {
             val region = settingsRepository.ocrRegion.value
@@ -321,13 +344,13 @@ class ScreenCaptureService : Service() {
             // Duplicate subtitle filtering
             if (settingsRepository.skipDuplicateSubtitles.value && lastDetectedSubtitleText.isNotBlank()) {
                 if (ocrDetector.isDuplicate(lastDetectedSubtitleText, ocrResult.detectedText)) {
-                    Log.d(TAG, "Auto-capture: Duplicate subtitle frame detected, skipping save.")
+                    Log.d(TAG, "Auto-capture: Duplicate subtitle frame detected ('${ocrResult.detectedText}'), skipping save.")
                     bitmap.recycle()
                     return false
                 }
             }
             lastDetectedSubtitleText = ocrResult.detectedText
-            Log.d(TAG, "Auto-capture: Subtitles detected (${ocrResult.englishWordCount} English words). Saving frame.")
+            Log.d(TAG, "Auto-capture: Subtitles detected (${ocrResult.englishWordCount} English words: '${ocrResult.detectedText}'). Saving frame.")
         }
 
         triggerHapticFeedback()
@@ -343,6 +366,18 @@ class ScreenCaptureService : Service() {
             )
         }
         return true
+    }
+
+    suspend fun executeCapture(isAutoMode: Boolean = false): Boolean {
+        val bitmap = acquireLatestBitmap() ?: run {
+            if (!isAutoMode) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@ScreenCaptureService, "Не удалось захватить кадр (попробуйте еще раз)", Toast.LENGTH_SHORT).show()
+                }
+            }
+            return false
+        }
+        return processCapturedBitmap(bitmap, isAutoMode)
     }
 
     fun captureAndSave(isAutoMode: Boolean = false, onFinished: ((Boolean) -> Unit)? = null) {
@@ -369,30 +404,7 @@ class ScreenCaptureService : Service() {
         if (image == null) return@withContext null
 
         try {
-            val planes = image.planes
-            val buffer: ByteBuffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * screenWidth
-
-            if (rowPadding == 0) {
-                val bitmap = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
-                bitmap.copyPixelsFromBuffer(buffer)
-                bitmap
-            } else {
-                val rawBitmap = Bitmap.createBitmap(
-                    screenWidth + rowPadding / pixelStride,
-                    screenHeight,
-                    Bitmap.Config.ARGB_8888
-                )
-                rawBitmap.copyPixelsFromBuffer(buffer)
-                val croppedBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
-                rawBitmap.recycle()
-                croppedBitmap
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error acquiring bitmap from ImageReader", e)
-            null
+            imageToBitmap(image)
         } finally {
             image.close()
         }
@@ -448,20 +460,26 @@ class ScreenCaptureService : Service() {
             val minCaptureCooldownMs = 1200L
 
             while (_serviceState.value.isAutoCapture) {
+                // Never auto-capture while SubSnap itself is in foreground
+                if (MainActivity.isAppInForeground) {
+                    delay(300L)
+                    continue
+                }
+
                 val smartMode = settingsRepository.smartDetectionEnabled.value
                 if (!smartMode) {
                     val currentIntervalSec = settingsRepository.autoCaptureIntervalSec.value
                     val delayMs = (currentIntervalSec * 1000).toLong().coerceIn(1000L, 15000L)
                     delay(delayMs)
-                    if (_serviceState.value.isAutoCapture) {
+                    if (_serviceState.value.isAutoCapture && !MainActivity.isAppInForeground) {
                         executeCapture(isAutoMode = true)
                     }
                     continue
                 }
 
-                // Stage 1: Ultra-lightweight Subtitle Band Sampling (~200ms delay)
-                delay(200L)
-                if (!_serviceState.value.isAutoCapture) break
+                // Stage 1: Ultra-lightweight Subtitle Band Sampling (~180ms delay)
+                delay(180L)
+                if (!_serviceState.value.isAutoCapture || MainActivity.isAppInForeground) continue
 
                 val region = settingsRepository.ocrRegion.value
                 val bandTop = if (region == "FULL_SCREEN") 0.40f else 0.68f
@@ -497,11 +515,11 @@ class ScreenCaptureService : Service() {
                     val diffResult = diffDetector.compare(currentLuminance)
                     isSignificant = diffResult.isSignificantChange
                     if (!isSignificant) {
-                        // Smoothly adapt baseline to gradual background changes
+                        // Smoothly adapt baseline to gradual background changes or subtitle disappearances
                         diffDetector.updateBaseline(currentLuminance)
                     } else {
-                        Log.d(TAG, "SmartDetector: Subtitle band change detected (delta=%.2f, ratio=%.3f). Debouncing 300ms...".format(
-                            java.util.Locale.US, diffResult.meanLuminanceDelta, diffResult.changedFraction
+                        Log.d(TAG, "SmartDetector: Subtitle appearance change detected (delta=%.2f, ratio=%.3f, brightened=%.3f). Debouncing 280ms...".format(
+                            java.util.Locale.US, diffResult.meanLuminanceDelta, diffResult.changedFraction, diffResult.brightenedFraction
                         ))
                     }
                 } catch (e: Exception) {
@@ -510,30 +528,45 @@ class ScreenCaptureService : Service() {
                     image.close()
                 }
 
-                if (isSignificant && _serviceState.value.isAutoCapture) {
-                    // Stage 2: Debounce 300ms for text rendering/animation to settle
-                    delay(300L)
-                    if (!_serviceState.value.isAutoCapture) break
+                if (isSignificant && _serviceState.value.isAutoCapture && !MainActivity.isAppInForeground) {
+                    // Stage 2: Debounce 280ms for text rendering/animation to settle
+                    delay(280L)
+                    if (!_serviceState.value.isAutoCapture || MainActivity.isAppInForeground) break
 
-                    val captured = executeCapture(isAutoMode = true)
-
-                    // Resynchronize baseline to the settled frame
-                    val postImage = try { imageReader?.acquireLatestImage() } catch (e: Exception) { null }
-                    if (postImage != null) {
-                        try {
-                            val postLuma = diffDetector.sampleFromImage(postImage, screenWidth, screenHeight, bandTop, bandBottom)
-                            diffDetector.updateBaseline(postLuma)
-                        } catch (e: Exception) {
-                            // ignore
-                        } finally {
-                            postImage.close()
+                    var settledImage: Image? = null
+                    var settleAttempts = 0
+                    while (settledImage == null && settleAttempts < 4) {
+                        settledImage = try { imageReader?.acquireLatestImage() } catch (e: Exception) { null }
+                        if (settledImage == null) {
+                            settleAttempts++
+                            delay(30L)
                         }
-                    } else if (currentLuminance != null) {
-                        diffDetector.updateBaseline(currentLuminance)
                     }
 
-                    if (captured) {
-                        lastCaptureTimestamp = System.currentTimeMillis()
+                    if (settledImage != null) {
+                        var settledBitmap: Bitmap? = null
+                        try {
+                            // Synchronize baseline with the exact settled frame before processing
+                            val settledLuma = diffDetector.sampleFromImage(settledImage, screenWidth, screenHeight, bandTop, bandBottom)
+                            diffDetector.updateBaseline(settledLuma)
+                            settledBitmap = imageToBitmap(settledImage)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing settled frame", e)
+                        } finally {
+                            settledImage.close()
+                        }
+
+                        if (settledBitmap != null) {
+                            val captured = processCapturedBitmap(settledBitmap, isAutoMode = true)
+                            if (captured) {
+                                lastCaptureTimestamp = System.currentTimeMillis()
+                            }
+                        }
+                    } else {
+                        val captured = executeCapture(isAutoMode = true)
+                        if (captured) {
+                            lastCaptureTimestamp = System.currentTimeMillis()
+                        }
                     }
                 }
             }
@@ -544,6 +577,7 @@ class ScreenCaptureService : Service() {
         autoCaptureJob?.cancel()
         autoCaptureJob = null
         diffDetector.reset()
+        lastDetectedSubtitleText = ""
         _serviceState.update { it.copy(isAutoCapture = false) }
         overlayManager?.updateAutoCaptureState(false)
         updateNotification("Авто-захват выключен. Ручной режим.")

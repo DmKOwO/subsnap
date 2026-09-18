@@ -27,7 +27,10 @@ class SubtitleBandDiffDetector(
         val isSignificantChange: Boolean,
         val meanLuminanceDelta: Float,
         val changedFraction: Float,
-        val isInitialFrame: Boolean = false
+        val brightenedFraction: Float = 0f,
+        val darkenedFraction: Float = 0f,
+        val isInitialFrame: Boolean = false,
+        val isTextAppearance: Boolean = false
     )
 
     /**
@@ -36,8 +39,8 @@ class SubtitleBandDiffDetector(
      */
     fun sampleFromImage(
         image: Image,
-        screenWidth: Int,
-        screenHeight: Int,
+        screenWidth: Int = image.width,
+        screenHeight: Int = image.height,
         bandTopFraction: Float = 0.68f,
         bandBottomFraction: Float = 0.95f
     ): IntArray {
@@ -110,7 +113,8 @@ class SubtitleBandDiffDetector(
     }
 
     /**
-     * Compares the current luminance samples against the baseline.
+     * Compares current luminance samples against the baseline.
+     * Identifies text appearance (high contrast brighten) vs static/disappearing text.
      */
     fun compare(currentLuminance: IntArray): DiffResult {
         val prev = previousLuminance
@@ -120,35 +124,55 @@ class SubtitleBandDiffDetector(
                 isSignificantChange = false,
                 meanLuminanceDelta = 0f,
                 changedFraction = 0f,
-                isInitialFrame = true
+                brightenedFraction = 0f,
+                darkenedFraction = 0f,
+                isInitialFrame = true,
+                isTextAppearance = false
             )
         }
 
         var sumDelta = 0
-        var changedCount = 0
+        var brightenedCount = 0
+        var darkenedCount = 0
         val total = currentLuminance.size
 
         for (i in 0 until total) {
-            val delta = abs(currentLuminance[i] - prev[i])
-            sumDelta += delta
+            val delta = currentLuminance[i] - prev[i]
+            val absDelta = abs(delta)
+            sumDelta += absDelta
             if (delta >= noiseThreshold) {
-                changedCount++
+                brightenedCount++
+            } else if (delta <= -noiseThreshold) {
+                darkenedCount++
             }
         }
 
         val meanDelta = sumDelta.toFloat() / total
-        val changedFraction = changedCount.toFloat() / total
+        val brightenedFraction = brightenedCount.toFloat() / total
+        val darkenedFraction = darkenedCount.toFloat() / total
+        val changedFraction = (brightenedCount + darkenedCount).toFloat() / total
 
-        // A change is significant if:
-        // 1. Enough pixels (e.g. >= 3.5%) changed significantly AND average delta is noticeable (>= 3.5), OR
-        // 2. A major transition occurred across the band (mean delta >= 12.0)
-        val isSignificant = (changedFraction >= minChangedFraction && meanDelta >= minMeanDelta) ||
-                (meanDelta >= 12.0f)
+        // In video players (YouTube, movies, streams), subtitles are high-contrast bright text
+        // (white, yellow, cyan) appearing against video background or semi-transparent dark boxes.
+        // 1. Text appearance: significant fraction of pixels become brighter with notable delta.
+        // 2. Text transition: old subtitle turns dark while new subtitle turns bright.
+        // 3. Text disappearance: pixels only darken back to background (brightenedFraction < 1.5%),
+        //    which smoothly adapts the baseline without triggering heavy ML Kit OCR.
+        val isAppearance = (brightenedFraction >= minChangedFraction && meanDelta >= minMeanDelta) ||
+                (brightenedFraction >= 0.025f && changedFraction >= 0.05f)
+
+        // Scene brightness cut
+        val isMajorCut = meanDelta >= 15.0f && (brightenedFraction >= 0.20f)
+
+        val isSignificant = isAppearance || isMajorCut
 
         return DiffResult(
             isSignificantChange = isSignificant,
             meanLuminanceDelta = meanDelta,
-            changedFraction = changedFraction
+            changedFraction = changedFraction,
+            brightenedFraction = brightenedFraction,
+            darkenedFraction = darkenedFraction,
+            isTextAppearance = isAppearance
         )
     }
 
@@ -173,7 +197,7 @@ class SubtitleBandDiffDetector(
         const val DEFAULT_GRID_COLS = 48
         const val DEFAULT_GRID_ROWS = 16
         const val DEFAULT_NOISE_THRESHOLD = 20
-        const val DEFAULT_MIN_CHANGED_FRACTION = 0.035f
-        const val DEFAULT_MIN_MEAN_DELTA = 3.5f
+        const val DEFAULT_MIN_CHANGED_FRACTION = 0.030f
+        const val DEFAULT_MIN_MEAN_DELTA = 3.0f
     }
 }

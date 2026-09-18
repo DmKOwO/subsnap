@@ -119,44 +119,58 @@ class OcrSubtitleDetector private constructor() {
             )
         }
 
-        val candidateLines = mutableListOf<String>()
-        var totalEnglishWords = 0
-
-        for (block in visionText.textBlocks) {
-            for (line in block.lines) {
-                val lineText = line.text.trim()
-                val lineBox = line.boundingBox
-
-                val inTargetZone = when (region) {
-                    "FULL_SCREEN" -> true
-                    else -> {
-                        if (lineBox != null && height > 0) {
-                            lineBox.centerY() > (height * 0.45f)
-                        } else true
-                    }
-                }
-
-                val englishWordsInLine = extractEnglishWords(lineText)
-
-                if (englishWordsInLine.isNotEmpty()) {
-                    totalEnglishWords += englishWordsInLine.size
-                    if (inTargetZone || englishWordsInLine.size >= 4) {
-                        candidateLines.add(lineText)
-                    }
-                }
-            }
+        val lineList = visionText.textBlocks.flatMap { it.lines }.map { line ->
+            RecognizedLine(
+                text = line.text.trim(),
+                centerY = line.boundingBox?.centerY() ?: (height / 2)
+            )
         }
 
-        // Subtitles require at least 2 English words and at least 1 candidate line
+        val (candidateLines, totalEnglishWords) = filterCandidateLines(lineList, height, region)
+
         val hasSubtitles = totalEnglishWords >= 2 && candidateLines.isNotEmpty()
         val combinedText = candidateLines.joinToString("\n")
 
         return SubtitleDetectionResult(
             hasSubtitles = hasSubtitles,
-            detectedText = if (combinedText.isNotBlank()) combinedText else fullRawText,
+            detectedText = if (combinedText.isNotBlank()) combinedText else (if (region == "FULL_SCREEN") fullRawText else ""),
             englishWordCount = totalEnglishWords,
             subtitleCandidates = candidateLines
         )
+    }
+
+    data class RecognizedLine(
+        val text: String,
+        val centerY: Int
+    )
+
+    fun filterCandidateLines(
+        lines: List<RecognizedLine>,
+        height: Int,
+        region: String = "LOWER_THIRD"
+    ): Pair<List<String>, Int> {
+        val candidateLines = mutableListOf<String>()
+        var totalEnglishWords = 0
+
+        for (line in lines) {
+            val inTargetZone = when (region) {
+                "FULL_SCREEN" -> true
+                else -> {
+                    if (height > 0) {
+                        line.centerY >= (height * 0.48f)
+                    } else true
+                }
+            }
+
+            if (!inTargetZone) continue
+
+            val englishWordsInLine = extractEnglishWords(line.text)
+            if (englishWordsInLine.isNotEmpty()) {
+                totalEnglishWords += englishWordsInLine.size
+                candidateLines.add(line.text)
+            }
+        }
+        return Pair(candidateLines, totalEnglishWords)
     }
 
     fun extractEnglishWords(text: String): List<String> {

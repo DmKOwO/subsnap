@@ -80,4 +80,53 @@ class OcrSubtitleDetectorTest {
         val different = "Where did everybody go today?"
         assertFalse(detector.isDuplicate(line1, different))
     }
+
+    @Test
+    fun filterCandidateLines_lowerThird_ignoresTopHeadersAndTitles() {
+        val screenHeight = 1000
+        val topTitle = OcrSubtitleDetector.RecognizedLine("Video Player: The Lost Temple (English CC)", centerY = 50)
+        val bottomSubtitle = OcrSubtitleDetector.RecognizedLine("I think we found the secret passage!", centerY = 850)
+
+        val (candidateLines, wordCount) = detector.filterCandidateLines(
+            lines = listOf(topTitle, bottomSubtitle),
+            height = screenHeight,
+            region = "LOWER_THIRD"
+        )
+
+        assertEquals(1, candidateLines.size)
+        assertEquals("I think we found the secret passage!", candidateLines[0])
+        assertEquals(6, wordCount)
+    }
+
+    @Test
+    fun filterCandidateLines_lowerThird_emptyWhenOnlyTopHeadersPresent() {
+        val screenHeight = 1000
+        val topTitle = OcrSubtitleDetector.RecognizedLine("Video Player: The Lost Temple (English CC)", centerY = 50)
+        val addressBar = OcrSubtitleDetector.RecognizedLine("chrome https google com search", centerY = 120)
+
+        val (candidateLines, wordCount) = detector.filterCandidateLines(
+            lines = listOf(topTitle, addressBar),
+            height = screenHeight,
+            region = "LOWER_THIRD"
+        )
+
+        assertTrue(candidateLines.isEmpty())
+        assertEquals(0, wordCount)
+    }
+
+    @Test
+    fun filterCandidateLines_fullScreen_includesTopAndBottom() {
+        val screenHeight = 1000
+        val topTitle = OcrSubtitleDetector.RecognizedLine("Video Player: The Lost Temple (English CC)", centerY = 50)
+        val bottomSubtitle = OcrSubtitleDetector.RecognizedLine("I think we found the secret passage!", centerY = 850)
+
+        val (candidateLines, wordCount) = detector.filterCandidateLines(
+            lines = listOf(topTitle, bottomSubtitle),
+            height = screenHeight,
+            region = "FULL_SCREEN"
+        )
+
+        assertEquals(2, candidateLines.size)
+        assertEquals(13, wordCount)
+    }
 }

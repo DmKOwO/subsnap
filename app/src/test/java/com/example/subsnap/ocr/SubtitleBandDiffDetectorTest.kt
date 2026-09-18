@@ -131,4 +131,57 @@ class SubtitleBandDiffDetectorTest {
         assertTrue("Major scene brightness transition must be flagged", result.isSignificantChange)
         assertTrue(result.meanLuminanceDelta > 150f)
     }
+
+    @Test
+    fun testSubtitleDisappearance_doesNotTriggerSignificantChange() {
+        val total = 48 * 16
+        val darkBackground = IntArray(total) { 30 }
+        detector.compare(darkBackground)
+
+        // Subtitle appears
+        val subtitleFrame = darkBackground.clone()
+        for (i in 0 until (total * 0.08).toInt()) {
+            subtitleFrame[i] = 240
+        }
+        val appearResult = detector.compare(subtitleFrame)
+        assertTrue(appearResult.isSignificantChange)
+        assertTrue(appearResult.isTextAppearance)
+
+        // Settled frame baseline established
+        detector.updateBaseline(subtitleFrame)
+
+        // Subtitle disappears: frame returns to dark background
+        val disappearResult = detector.compare(darkBackground)
+        assertFalse("Subtitle disappearance (only darkening) must NOT trigger significant change", disappearResult.isSignificantChange)
+        assertFalse(disappearResult.isTextAppearance)
+        assertEquals(0f, disappearResult.brightenedFraction, 0.001f)
+        assertTrue(disappearResult.darkenedFraction >= 0.07f)
+    }
+
+    @Test
+    fun testSubtitleTransition_directReplacement_triggers() {
+        val total = 48 * 16
+        val darkBackground = IntArray(total) { 30 }
+        detector.compare(darkBackground)
+
+        // Subtitle 1 on the left side of the band
+        val sub1 = darkBackground.clone()
+        for (i in 0 until (total * 0.08).toInt()) {
+            sub1[i] = 240
+        }
+        detector.compare(sub1)
+        detector.updateBaseline(sub1)
+
+        // Subtitle 2 replaces Subtitle 1 (on the right side of the band)
+        val sub2 = darkBackground.clone()
+        for (i in (total * 0.5).toInt() until (total * 0.58).toInt()) {
+            sub2[i] = 240
+        }
+
+        val transitionResult = detector.compare(sub2)
+        assertTrue("Direct replacement of one subtitle line with another must trigger", transitionResult.isSignificantChange)
+        assertTrue(transitionResult.isTextAppearance)
+        assertTrue(transitionResult.brightenedFraction >= 0.05f)
+        assertTrue(transitionResult.darkenedFraction >= 0.05f)
+    }
 }
