@@ -71,7 +71,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_MODEL = "gemini_model"
         private const val KEY_FILTER_EMPTY = "filter_empty_screenshots"
         private const val KEY_GITHUB_REPO = "github_repo"
-        const val DEFAULT_GITHUB_REPO = "dmk/subsnap"
+        const val DEFAULT_GITHUB_REPO = "DmKOwO/subsnap"
 
         // Updated for modern Gemini models in Google AI Studio
         const val DEFAULT_MODEL = "gemini-3.8-flash"
