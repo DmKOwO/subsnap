@@ -321,9 +321,20 @@ class GitHubUpdateManager(private val context: Context) {
             val newerReleases = releases.filter { it.isNewer }
             val hasUpdate = newerReleases.isNotEmpty()
             val latest = if (hasUpdate) {
-                normalizeVersion(newerReleases.first().versionName)
+                val highestNewer = newerReleases.maxWithOrNull { a, b ->
+                    compareVersions(a.tagName, b.tagName)
+                }
+                normalizeVersion(highestNewer?.versionName ?: newerReleases.first().versionName)
             } else {
-                cleanCurrent
+                val highestRelease = releases.maxWithOrNull { a, b ->
+                    compareVersions(a.tagName, b.tagName)
+                }
+                val highestTag = highestRelease?.let { normalizeVersion(it.versionName) }
+                if (highestTag != null && isNewerVersion(highestTag, cleanCurrent)) {
+                    highestTag
+                } else {
+                    cleanCurrent
+                }
             }
 
             val sb = StringBuilder()
@@ -354,32 +365,101 @@ class GitHubUpdateManager(private val context: Context) {
             )
         }
 
-        fun isNewerVersion(remoteTag: String?, currentVersion: String?): Boolean {
-            try {
-                val cleanRemote = normalizeVersion(remoteTag)
-                val cleanCurrent = normalizeVersion(currentVersion)
+        private data class ParsedVersion(
+            val coreParts: List<Int>,
+            val preReleaseParts: List<String>?,
+            val isPreRelease: Boolean
+        )
 
-                if (cleanRemote.isBlank() || cleanCurrent.isBlank()) return false
-                if (cleanRemote.equals(cleanCurrent, ignoreCase = true)) return false
+        private fun parseVersion(raw: String?): ParsedVersion? {
+            val normalized = normalizeVersion(raw)
+            if (normalized.isBlank()) return null
 
-                val remoteParts = cleanRemote.split(".").map { part ->
-                    Regex("""^\d+""").find(part.trim())?.value?.toIntOrNull() ?: 0
-                }
-                val currentParts = cleanCurrent.split(".").map { part ->
-                    Regex("""^\d+""").find(part.trim())?.value?.toIntOrNull() ?: 0
-                }
+            // Discard build metadata (after '+') per SemVer 2.0
+            val withoutBuild = normalized.substringBefore('+')
 
-                val maxLen = maxOf(remoteParts.size, currentParts.size)
-                for (i in 0 until maxLen) {
-                    val r = remoteParts.getOrElse(i) { 0 }
-                    val c = currentParts.getOrElse(i) { 0 }
-                    if (r > c) return true
-                    if (r < c) return false
-                }
-                return false
-            } catch (e: Exception) {
-                return false
+            // Separate core version and pre-release tag (after '-')
+            val hasPreRelease = withoutBuild.contains('-')
+            val coreStr = withoutBuild.substringBefore('-')
+            val preReleaseStr = if (hasPreRelease) withoutBuild.substringAfter('-') else null
+
+            val coreParts = coreStr.split('.').map { part ->
+                Regex("""^\d+""").find(part.trim())?.value?.toIntOrNull() ?: 0
             }
+
+            val preReleaseParts = preReleaseStr?.split('.')?.map { it.trim() }?.filter { it.isNotEmpty() }
+
+            return ParsedVersion(
+                coreParts = coreParts,
+                preReleaseParts = preReleaseParts,
+                isPreRelease = hasPreRelease
+            )
+        }
+
+        /**
+         * Compares two versions according to Semantic Versioning 2.0.0 rules:
+         * 1. Compares core numeric components (major.minor.patch...).
+         * 2. When core numbers are equal, a normal version has higher precedence than a pre-release.
+         * 3. Two pre-release versions with identical core numbers are compared identifier by identifier:
+         *    - Numeric identifiers are compared numerically.
+         *    - Identifiers with letters are compared lexically.
+         *    - Numeric identifiers always have lower precedence than non-numeric identifiers.
+         * Returns > 0 if a > b, < 0 if a < b, and 0 if equal.
+         */
+        fun compareVersions(a: String?, b: String?): Int {
+            val pA = parseVersion(a) ?: return if (parseVersion(b) != null) -1 else 0
+            val pB = parseVersion(b) ?: return 1
+
+            // 1. Compare core parts
+            val maxLen = maxOf(pA.coreParts.size, pB.coreParts.size)
+            for (i in 0 until maxLen) {
+                val cA = pA.coreParts.getOrElse(i) { 0 }
+                val cB = pB.coreParts.getOrElse(i) { 0 }
+                if (cA > cB) return 1
+                if (cA < cB) return -1
+            }
+
+            // 2. Core parts are equal. Check pre-release status.
+            // In SemVer, a normal version (WITHOUT pre-release) has HIGHER precedence than a pre-release version.
+            if (!pA.isPreRelease && pB.isPreRelease) return 1
+            if (pA.isPreRelease && !pB.isPreRelease) return -1
+            if (!pA.isPreRelease && !pB.isPreRelease) return 0
+
+            // 3. Both are pre-releases of the same core version. Compare pre-release parts.
+            val partsA = pA.preReleaseParts ?: emptyList()
+            val partsB = pB.preReleaseParts ?: emptyList()
+            val maxParts = maxOf(partsA.size, partsB.size)
+
+            for (i in 0 until maxParts) {
+                if (i >= partsA.size) return -1 // A has fewer fields -> lower precedence
+                if (i >= partsB.size) return 1  // B has fewer fields -> A higher precedence
+
+                val idA = partsA[i]
+                val idB = partsB[i]
+
+                val numA = idA.toIntOrNull()
+                val numB = idB.toIntOrNull()
+
+                if (numA != null && numB != null) {
+                    if (numA != numB) return numA.compareTo(numB)
+                } else if (numA != null && numB == null) {
+                    // Numeric identifiers always have lower precedence than non-numeric
+                    return -1
+                } else if (numA == null && numB != null) {
+                    return 1
+                } else {
+                    val comp = idA.compareTo(idB, ignoreCase = true)
+                    if (comp != 0) return comp
+                }
+            }
+
+            return 0
+        }
+
+        fun isNewerVersion(remoteTag: String?, currentVersion: String?): Boolean {
+            val pRemote = parseVersion(remoteTag) ?: return false
+            val pCurrent = parseVersion(currentVersion) ?: return false
+            return compareVersions(remoteTag, currentVersion) > 0
         }
     }
 }

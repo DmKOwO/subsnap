@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
@@ -2743,6 +2744,7 @@ fun ReleaseHistoryDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val cleanCurrent = GitHubUpdateManager.normalizeVersion(currentVersion)
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -2771,7 +2773,7 @@ fun ReleaseHistoryDialog(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Установлена версия: v$currentVersion",
+                            text = "Установлена версия: v$cleanCurrent",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2856,7 +2858,7 @@ fun ReleaseHistoryDialog(
                                                 Button(
                                                     onClick = {
                                                         GitHubUpdateManager.getInstance(context)
-                                                            .installApk(downloadState.apkFile)
+                                                             .installApk(downloadState.apkFile)
                                                     },
                                                     modifier = Modifier.fillMaxWidth()
                                                 ) {
@@ -2876,6 +2878,19 @@ fun ReleaseHistoryDialog(
                                                         Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                                         Spacer(modifier = Modifier.width(6.dp))
                                                         Text("Скачать обновление v${versionDiff.latestVersion}")
+                                                    }
+                                                } else {
+                                                    Button(
+                                                        onClick = {
+                                                            val targetUrl = latestNewerRelease?.htmlUrl
+                                                                ?: "https://github.com/DmKOwO/subsnap/releases"
+                                                            onOpenUrl(targetUrl)
+                                                        },
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text("Открыть релиз на GitHub (v${versionDiff.latestVersion})")
                                                     }
                                                 }
                                             }
@@ -2923,7 +2938,7 @@ fun ReleaseHistoryDialog(
                                                     contentColor = Color.White
                                                 ) {
                                                     Text(
-                                                        text = "v$currentVersion",
+                                                        text = "v$cleanCurrent",
                                                         fontSize = 11.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         maxLines = 1,
@@ -2951,6 +2966,42 @@ fun ReleaseHistoryDialog(
                                 contentAlignment = Alignment.Center
                             ) {
                                 CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                            }
+                        } else {
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = "Не удалось проверить актуальность версии",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "Проверьте подключение к сети или репозиторий в настройках.",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
