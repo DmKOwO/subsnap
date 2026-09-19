@@ -376,6 +376,7 @@ fun MainScreen(
                 transitionSpec = {
                     fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
                 },
+                modifier = Modifier.weight(1f).fillMaxWidth(),
                 label = "TabContentTransition"
             ) { tabIndex ->
                 if (tabIndex == 0) {
@@ -476,7 +477,8 @@ fun MainScreen(
                                     item = item,
                                     onClick = { selectedScreenshotForPreview = item },
                                     onDelete = {
-                                        viewModel.deleteScreenshot(item.id) {
+                                        val deletedId = item.id
+                                        viewModel.deleteScreenshot(deletedId) {
                                             coroutineScope.launch {
                                                 snackbarHostState.currentSnackbarData?.dismiss()
                                                 val result = snackbarHostState.showSnackbar(
@@ -485,7 +487,9 @@ fun MainScreen(
                                                     duration = SnackbarDuration.Short
                                                 )
                                                 if (result == SnackbarResult.ActionPerformed) {
-                                                    viewModel.undoDeleteScreenshot()
+                                                    viewModel.undoDeleteScreenshot(deletedId)
+                                                } else {
+                                                    viewModel.purgeTrash(deletedId)
                                                 }
                                             }
                                         }
@@ -958,7 +962,9 @@ fun MainScreen(
                             duration = SnackbarDuration.Short
                         )
                         if (result == SnackbarResult.ActionPerformed) {
-                            viewModel.undoDeleteScreenshot()
+                            viewModel.undoDeleteScreenshot(targetId)
+                        } else {
+                            viewModel.purgeTrash(targetId)
                         }
                     }
                 }
@@ -1229,20 +1235,21 @@ fun BatchProgressCard(
     onDismiss: () -> Unit,
     onViewDeck: () -> Unit
 ) {
+    val cardColor = when {
+        batchState.isRunning -> MaterialTheme.colorScheme.primaryContainer
+        batchState.isSuccess -> Color(0xFFE8F5E9)
+        batchState.isPartialSuccess -> Color(0xFFFFF3E0)
+        batchState.isFailed -> MaterialTheme.colorScheme.errorContainer
+        batchState.isAllSkipped -> Color(0xFFFFF8E1)
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (batchState.isRunning) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else if (batchState.isCompleted) {
-                Color(0xFFE8F5E9)
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            }
-        ),
+        colors = CardDefaults.cardColors(containerColor = cardColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -1252,47 +1259,96 @@ fun BatchProgressCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    if (batchState.isRunning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.5.dp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Генерация ${batchState.current} из ${batchState.total}...",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    } else if (batchState.isCompleted) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = Color(0xFF2E7D32),
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Генерация завершена!",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = Color(0xFF1B5E20)
-                        )
-                    } else {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Генерация остановлена",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                    when {
+                        batchState.isRunning -> {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.5.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = if (batchState.current > 0) "Генерация ${batchState.current} из ${batchState.total}..." else "Подготовка генерации...",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        batchState.isSuccess -> {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF2E7D32),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Генерация завершена!",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = Color(0xFF1B5E20)
+                            )
+                        }
+                        batchState.isPartialSuccess -> {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = Color(0xFFE65100),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Завершено частично",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = Color(0xFFE65100)
+                            )
+                        }
+                        batchState.isFailed -> {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Ошибка генерации",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                        batchState.isAllSkipped -> {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = Color(0xFFF57C00),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Кадры пропущены",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = Color(0xFFE65100)
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Генерация остановлена",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 }
 

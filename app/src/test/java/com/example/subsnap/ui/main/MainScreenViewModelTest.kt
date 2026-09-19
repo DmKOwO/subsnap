@@ -98,4 +98,70 @@ class MainScreenViewModelTest {
         assertEquals(true, cancelled.isCancelled)
         assertEquals(0.2f, cancelled.progress)
     }
+
+    @Test
+    fun batchGenerationState_outcomeClassification_correctlyCategorizes() {
+        val success = BatchGenerationState(
+            isCompleted = true,
+            total = 5,
+            current = 5,
+            successCount = 5,
+            errorCount = 0
+        )
+        assertEquals(true, success.isSuccess)
+        assertEquals(false, success.isPartialSuccess)
+        assertEquals(false, success.isFailed)
+        assertEquals(false, success.isAllSkipped)
+
+        val partial = BatchGenerationState(
+            isCompleted = true,
+            total = 5,
+            current = 5,
+            successCount = 3,
+            errorCount = 2
+        )
+        assertEquals(false, partial.isSuccess)
+        assertEquals(true, partial.isPartialSuccess)
+        assertEquals(false, partial.isFailed)
+        assertEquals(false, partial.isAllSkipped)
+
+        val failed = BatchGenerationState(
+            isCompleted = true,
+            total = 5,
+            current = 5,
+            successCount = 0,
+            errorCount = 5
+        )
+        assertEquals(false, failed.isSuccess)
+        assertEquals(false, failed.isPartialSuccess)
+        assertEquals(true, failed.isFailed)
+        assertEquals(false, failed.isAllSkipped)
+
+        val allSkipped = BatchGenerationState(
+            isCompleted = true,
+            total = 5,
+            current = 5,
+            successCount = 0,
+            errorCount = 0,
+            skippedCount = 5
+        )
+        assertEquals(false, allSkipped.isSuccess)
+        assertEquals(false, allSkipped.isPartialSuccess)
+        assertEquals(false, allSkipped.isFailed)
+        assertEquals(true, allSkipped.isAllSkipped)
+
+        val unconfiguredKeyFailed = BatchGenerationState(
+            isCompleted = true,
+            total = 5,
+            current = 0,
+            successCount = 0,
+            errorCount = 0,
+            skippedCount = 0,
+            currentWord = "API-ключ Gemini не настроен"
+        )
+        assertEquals(false, unconfiguredKeyFailed.isSuccess)
+        assertEquals(false, unconfiguredKeyFailed.isPartialSuccess)
+        assertEquals(true, unconfiguredKeyFailed.isFailed)
+        assertEquals(false, unconfiguredKeyFailed.isAllSkipped)
+    }
 }

@@ -29,9 +29,12 @@ data class CapturedScreenshot(
         }
 }
 
-class ScreenshotStorage(private val context: Context) {
+class ScreenshotStorage(
+    private val context: Context? = null,
+    baseDir: File? = null
+) {
 
-    private val screenshotsDir: File = File(context.filesDir, "screenshots").apply {
+    private val screenshotsDir: File = (baseDir ?: File(context?.filesDir, "screenshots")).apply {
         if (!exists()) mkdirs()
     }
 
@@ -39,10 +42,21 @@ class ScreenshotStorage(private val context: Context) {
     val screenshots: StateFlow<List<CapturedScreenshot>> = _screenshots.asStateFlow()
 
     init {
+        cleanupStaleTrash()
         refresh()
     }
 
     private var lastTrashedItem: Pair<CapturedScreenshot, File>? = null
+
+    fun cleanupStaleTrash() {
+        try {
+            screenshotsDir.listFiles { f ->
+                f.name.startsWith(".trash_")
+            }?.forEach { it.delete() }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
 
     fun refresh() {
         val files = screenshotsDir.listFiles { f ->
@@ -96,6 +110,9 @@ class ScreenshotStorage(private val context: Context) {
 
         val targetItem = _screenshots.value.find { it.id == id } ?: return@withContext null
         val trashFile = File(screenshotsDir, ".trash_${targetItem.file.name}")
+        if (trashFile.exists()) {
+            trashFile.delete()
+        }
         val renamed = targetItem.file.renameTo(trashFile)
         if (renamed) {
             lastTrashedItem = targetItem to trashFile
@@ -108,9 +125,16 @@ class ScreenshotStorage(private val context: Context) {
         }
     }
 
-    suspend fun undoDelete(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun undoDelete(id: String? = null): Boolean = withContext(Dispatchers.IO) {
         val trashed = lastTrashedItem ?: return@withContext false
+        if (id != null && trashed.first.id != id) {
+            return@withContext false
+        }
         val originalFile = trashed.first.file
+        if (!trashed.second.exists()) {
+            lastTrashedItem = null
+            return@withContext false
+        }
         val restored = trashed.second.renameTo(originalFile)
         lastTrashedItem = null
         if (restored) {
@@ -119,9 +143,17 @@ class ScreenshotStorage(private val context: Context) {
         restored
     }
 
+    suspend fun purgeTrash(id: String? = null): Unit = withContext(Dispatchers.IO) {
+        if (id == null || lastTrashedItem?.first?.id == id) {
+            lastTrashedItem?.second?.delete()
+            lastTrashedItem = null
+        }
+    }
+
     suspend fun clearAll(): Unit = withContext(Dispatchers.IO) {
         lastTrashedItem?.second?.delete()
         lastTrashedItem = null
+        cleanupStaleTrash()
         screenshotsDir.listFiles()?.forEach { it.delete() }
         refresh()
     }

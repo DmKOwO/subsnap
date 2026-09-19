@@ -42,6 +42,18 @@ data class BatchGenerationState(
 ) {
     val progress: Float
         get() = if (total > 0) current.toFloat() / total.toFloat() else 0f
+
+    val isSuccess: Boolean
+        get() = isCompleted && successCount > 0 && errorCount == 0
+
+    val isPartialSuccess: Boolean
+        get() = isCompleted && successCount > 0 && errorCount > 0
+
+    val isFailed: Boolean
+        get() = isCompleted && !isCancelled && successCount == 0 && (errorCount > 0 || skippedCount == 0)
+
+    val isAllSkipped: Boolean
+        get() = isCompleted && successCount == 0 && errorCount == 0 && skippedCount > 0
 }
 
 enum class CardFilterType(val title: String) {
@@ -243,13 +255,20 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun undoDeleteScreenshot() {
+    fun purgeTrash(id: String? = null) {
         viewModelScope.launch {
-            screenshotStorage.undoDelete()
+            screenshotStorage.purgeTrash(id)
+        }
+    }
+
+    fun undoDeleteScreenshot(id: String? = null) {
+        viewModelScope.launch {
+            screenshotStorage.undoDelete(id)
         }
     }
 
     fun clearAllScreenshots() {
+        cancelBatchGeneration()
         viewModelScope.launch {
             screenshotStorage.clearAll()
         }
@@ -259,6 +278,18 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         val list = screenshots.value
         if (list.isEmpty()) return
         if (_batchState.value.isRunning) return
+
+        val apiKey = settingsRepository.apiKey.value
+        if (apiKey.isBlank()) {
+            _batchState.value = BatchGenerationState(
+                isRunning = false,
+                isCompleted = true,
+                total = list.size,
+                errorCount = list.size,
+                currentWord = "API-ключ Gemini не настроен"
+            )
+            return
+        }
 
         batchJob = viewModelScope.launch {
             _batchState.value = BatchGenerationState(
@@ -285,10 +316,22 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
                     currentWord = "Кадр $index из ${list.size}..."
                 )
 
+                // 0. Check if file exists (might have been deleted)
+                if (!item.file.exists()) {
+                    skipped++
+                    if (!isActive) break
+                    _batchState.value = _batchState.value.copy(
+                        skippedCount = skipped,
+                        currentWord = "Кадр $index: файл не найден (пропущен)"
+                    )
+                    continue
+                }
+
                 // 1. OCR Subtitle check if filter empty is enabled
                 val ocrResult = ocrDetector.detectSubtitles(item.file)
                 if (!ocrResult.hasSubtitles && settingsRepository.filterEmptyScreenshots.value) {
                     skipped++
+                    if (!isActive) break
                     _batchState.value = _batchState.value.copy(
                         skippedCount = skipped,
                         currentWord = "Кадр $index: субтитры не найдены (пропущен)"
@@ -298,35 +341,91 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
                 }
 
                 // 2. Gemini API call
-                val result = geminiClient.analyzeScreenshot(
+                var result = geminiClient.analyzeScreenshot(
                     screenshotFile = item.file,
                     ocrHint = ocrResult.detectedText.ifBlank { null }
                 )
 
+                // 3. Handle rate limit (429) with automatic backoff & retry
+                if (result.isFailure) {
+                    val err = result.exceptionOrNull()
+                    val msg = err?.message ?: ""
+                    if (msg.contains("429") || msg.contains("лимит запросов")) {
+                        if (!isActive) break
+                        _batchState.value = _batchState.value.copy(
+                            currentWord = "Кадр $index: лимит API, пауза 4 сек..."
+                        )
+                        delay(4000)
+                        if (!isActive) break
+                        result = geminiClient.analyzeScreenshot(
+                            screenshotFile = item.file,
+                            ocrHint = ocrResult.detectedText.ifBlank { null }
+                        )
+                    }
+                }
+
+                if (!isActive) break
+
                 result.onSuccess { card ->
                     ankiCardStorage.saveCard(card)
                     successes++
-                    _batchState.value = _batchState.value.copy(
-                        successCount = successes,
-                        currentWord = "✓ ${card.targetWord}"
-                    )
+                    if (isActive) {
+                        _batchState.value = _batchState.value.copy(
+                            successCount = successes,
+                            currentWord = "✓ ${card.targetWord}"
+                        )
+                    }
                 }.onFailure { err ->
-                    errors++
-                    val shortMsg = (err.message ?: "Ошибка ИИ").take(35)
-                    _batchState.value = _batchState.value.copy(
-                        errorCount = errors,
-                        currentWord = "Кадр $index: $shortMsg"
-                    )
+                    val errMsg = err.message ?: "Ошибка ИИ"
+                    val isAuthError = errMsg.contains("401") || errMsg.contains("403") ||
+                            errMsg.contains("Неверный API-ключ") ||
+                            errMsg.contains("API key not valid", ignoreCase = true) ||
+                            errMsg.contains("API_KEY_INVALID", ignoreCase = true)
+                    val isNoSubtitles = errMsg.contains("не найдены", ignoreCase = true)
+                    if (isNoSubtitles) {
+                        skipped++
+                        if (isActive) {
+                            _batchState.value = _batchState.value.copy(
+                                skippedCount = skipped,
+                                currentWord = "Кадр $index: без субтитров (пропущен)"
+                            )
+                        }
+                    } else {
+                        errors++
+                        val shortMsg = errMsg.take(35)
+                        if (isActive) {
+                            _batchState.value = _batchState.value.copy(
+                                errorCount = errors,
+                                currentWord = "Кадр $index: $shortMsg"
+                            )
+                        }
+                    }
+
+                    if (isAuthError && isActive) {
+                        _batchState.value = _batchState.value.copy(
+                            isRunning = false,
+                            isCompleted = true,
+                            currentWord = "Прервано: неверный API-ключ Gemini"
+                        )
+                        return@launch
+                    }
                 }
 
                 delay(350)
             }
 
             if (isActive) {
+                val completionSummary = when {
+                    successes > 0 && errors == 0 -> "Готово! Создано карточек: $successes"
+                    successes > 0 && errors > 0 -> "Готово: $successes (ошибок: $errors)"
+                    successes == 0 && errors > 0 -> "Ошибок генерации: $errors"
+                    successes == 0 && skipped > 0 -> "Все кадры пропущены (без субтитров)"
+                    else -> "Готово! Обработано кадров: ${list.size}"
+                }
                 _batchState.value = _batchState.value.copy(
                     isRunning = false,
                     isCompleted = true,
-                    currentWord = "Готово! Создано: $successes"
+                    currentWord = completionSummary
                 )
             }
         }
@@ -335,10 +434,11 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     fun cancelBatchGeneration() {
         batchJob?.cancel()
         batchJob = null
+        val currentSuccess = _batchState.value.successCount
         _batchState.value = _batchState.value.copy(
             isRunning = false,
             isCancelled = true,
-            currentWord = "Генерация отменена"
+            currentWord = if (currentSuccess > 0) "Генерация отменена (создано: $currentSuccess)" else "Генерация отменена"
         )
     }
 
