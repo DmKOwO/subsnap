@@ -15,6 +15,8 @@ import com.example.subsnap.ocr.OcrSubtitleDetector
 import com.example.subsnap.ota.AppReleaseRecord
 import com.example.subsnap.ota.VersionDiff
 import com.example.subsnap.service.ScreenCaptureService
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,9 +24,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Calendar
+
+data class BatchGenerationState(
+    val isRunning: Boolean = false,
+    val current: Int = 0,
+    val total: Int = 0,
+    val currentWord: String = "",
+    val successCount: Int = 0,
+    val skippedCount: Int = 0,
+    val errorCount: Int = 0,
+    val isCancelled: Boolean = false,
+    val isCompleted: Boolean = false
+) {
+    val progress: Float
+        get() = if (total > 0) current.toFloat() / total.toFloat() else 0f
+}
 
 enum class CardFilterType(val title: String) {
     ALL("Все"),
@@ -197,6 +215,11 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val _generatedCard = MutableStateFlow<AnkiCard?>(null)
     val generatedCard: StateFlow<AnkiCard?> = _generatedCard.asStateFlow()
 
+    private val _batchState = MutableStateFlow(BatchGenerationState())
+    val batchState: StateFlow<BatchGenerationState> = _batchState.asStateFlow()
+
+    private var batchJob: Job? = null
+
     private fun getStartOfDayMillis(): Long {
         val calendar = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
@@ -211,9 +234,18 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         screenshotStorage.refresh()
     }
 
-    fun deleteScreenshot(id: String) {
+    fun deleteScreenshot(id: String, onDeleted: ((CapturedScreenshot) -> Unit)? = null) {
         viewModelScope.launch {
-            screenshotStorage.deleteScreenshot(id)
+            val item = screenshotStorage.deleteScreenshot(id)
+            if (item != null) {
+                onDeleted?.invoke(item)
+            }
+        }
+    }
+
+    fun undoDeleteScreenshot() {
+        viewModelScope.launch {
+            screenshotStorage.undoDelete()
         }
     }
 
@@ -221,6 +253,97 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             screenshotStorage.clearAll()
         }
+    }
+
+    fun startBatchGeneration() {
+        val list = screenshots.value
+        if (list.isEmpty()) return
+        if (_batchState.value.isRunning) return
+
+        batchJob = viewModelScope.launch {
+            _batchState.value = BatchGenerationState(
+                isRunning = true,
+                current = 0,
+                total = list.size,
+                currentWord = "Запуск генерации...",
+                successCount = 0,
+                skippedCount = 0,
+                errorCount = 0
+            )
+
+            var successes = 0
+            var skipped = 0
+            var errors = 0
+
+            for (i in list.indices) {
+                if (!isActive) break
+                val item = list[i]
+                val index = i + 1
+
+                _batchState.value = _batchState.value.copy(
+                    current = index,
+                    currentWord = "Кадр $index из ${list.size}..."
+                )
+
+                // 1. OCR Subtitle check if filter empty is enabled
+                val ocrResult = ocrDetector.detectSubtitles(item.file)
+                if (!ocrResult.hasSubtitles && settingsRepository.filterEmptyScreenshots.value) {
+                    skipped++
+                    _batchState.value = _batchState.value.copy(
+                        skippedCount = skipped,
+                        currentWord = "Кадр $index: субтитры не найдены (пропущен)"
+                    )
+                    delay(150)
+                    continue
+                }
+
+                // 2. Gemini API call
+                val result = geminiClient.analyzeScreenshot(
+                    screenshotFile = item.file,
+                    ocrHint = ocrResult.detectedText.ifBlank { null }
+                )
+
+                result.onSuccess { card ->
+                    ankiCardStorage.saveCard(card)
+                    successes++
+                    _batchState.value = _batchState.value.copy(
+                        successCount = successes,
+                        currentWord = "✓ ${card.targetWord}"
+                    )
+                }.onFailure { err ->
+                    errors++
+                    val shortMsg = (err.message ?: "Ошибка ИИ").take(35)
+                    _batchState.value = _batchState.value.copy(
+                        errorCount = errors,
+                        currentWord = "Кадр $index: $shortMsg"
+                    )
+                }
+
+                delay(350)
+            }
+
+            if (isActive) {
+                _batchState.value = _batchState.value.copy(
+                    isRunning = false,
+                    isCompleted = true,
+                    currentWord = "Готово! Создано: $successes"
+                )
+            }
+        }
+    }
+
+    fun cancelBatchGeneration() {
+        batchJob?.cancel()
+        batchJob = null
+        _batchState.value = _batchState.value.copy(
+            isRunning = false,
+            isCancelled = true,
+            currentWord = "Генерация отменена"
+        )
+    }
+
+    fun dismissBatchState() {
+        _batchState.value = BatchGenerationState()
     }
 
     fun setApiKey(key: String) {

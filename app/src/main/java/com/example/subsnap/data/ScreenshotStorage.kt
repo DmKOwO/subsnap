@@ -42,9 +42,12 @@ class ScreenshotStorage(private val context: Context) {
         refresh()
     }
 
+    private var lastTrashedItem: Pair<CapturedScreenshot, File>? = null
+
     fun refresh() {
-        val files = screenshotsDir.listFiles { f -> f.extension.lowercase() in listOf("webp", "jpg", "png") }
-            ?: emptyArray()
+        val files = screenshotsDir.listFiles { f ->
+            f.extension.lowercase() in listOf("webp", "jpg", "png") && !f.name.startsWith(".trash_")
+        } ?: emptyArray()
 
         val list = files.map { file ->
             CapturedScreenshot(
@@ -86,16 +89,39 @@ class ScreenshotStorage(private val context: Context) {
         item
     }
 
-    suspend fun deleteScreenshot(id: String): Boolean = withContext(Dispatchers.IO) {
-        val target = _screenshots.value.find { it.id == id }?.file
-        val deleted = target?.delete() ?: false
-        if (deleted) {
+    suspend fun deleteScreenshot(id: String): CapturedScreenshot? = withContext(Dispatchers.IO) {
+        // Purge previous trashed file if any
+        lastTrashedItem?.second?.delete()
+        lastTrashedItem = null
+
+        val targetItem = _screenshots.value.find { it.id == id } ?: return@withContext null
+        val trashFile = File(screenshotsDir, ".trash_${targetItem.file.name}")
+        val renamed = targetItem.file.renameTo(trashFile)
+        if (renamed) {
+            lastTrashedItem = targetItem to trashFile
+            refresh()
+            targetItem
+        } else {
+            targetItem.file.delete()
+            refresh()
+            targetItem
+        }
+    }
+
+    suspend fun undoDelete(): Boolean = withContext(Dispatchers.IO) {
+        val trashed = lastTrashedItem ?: return@withContext false
+        val originalFile = trashed.first.file
+        val restored = trashed.second.renameTo(originalFile)
+        lastTrashedItem = null
+        if (restored) {
             refresh()
         }
-        deleted
+        restored
     }
 
     suspend fun clearAll(): Unit = withContext(Dispatchers.IO) {
+        lastTrashedItem?.second?.delete()
+        lastTrashedItem = null
         screenshotsDir.listFiles()?.forEach { it.delete() }
         refresh()
     }

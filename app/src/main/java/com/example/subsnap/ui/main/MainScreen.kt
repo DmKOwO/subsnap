@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -104,6 +105,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -123,6 +128,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -152,6 +158,7 @@ import com.example.subsnap.service.ScreenCaptureService
 import com.example.subsnap.tts.TtsHelper
 import com.example.subsnap.ui.study.StudyScreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.subsnap.BuildConfig
 import com.example.subsnap.ota.AppUpdateInfo
@@ -204,8 +211,11 @@ fun MainScreen(
     val masteredCardsCount by viewModel.masteredCardsCount.collectAsStateWithLifecycle()
     val favoriteCardsCount by viewModel.favoriteCardsCount.collectAsStateWithLifecycle()
     val retentionRatePercent by viewModel.retentionRatePercent.collectAsStateWithLifecycle()
+    val batchState by viewModel.batchState.collectAsStateWithLifecycle()
 
     val ttsHelper = remember { TtsHelper.getInstance(context) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
     var isInStudyMode by remember { mutableStateOf(false) }
     val dueCards = remember(cards) { SpacedRepetition.getDueCards(cards) }
 
@@ -308,6 +318,7 @@ fun MainScreen(
                 )
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = modifier
     ) { innerPadding ->
         Column(
@@ -368,105 +379,117 @@ fun MainScreen(
                 label = "TabContentTransition"
             ) { tabIndex ->
                 if (tabIndex == 0) {
-                    // TAB 1: SCREENSHOTS
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp)
-                ) {
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    if (apiKey.isBlank()) {
-                        ApiKeyWarningBanner(onClick = { showSettingsDialog = true })
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-
-                    TodayStatsCard(
-                        todayScreenshots = todayScreenshotsCount,
-                        todayCards = todayCardsCount,
-                        dueCardsCount = dueCards.size
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    ControlPanelCard(
-                        hasOverlay = hasOverlayPermission,
-                        hasNotification = hasNotificationPermission,
-                        serviceState = serviceState,
-                        autoCaptureInterval = autoCaptureIntervalSec,
-                        isSmartDetection = smartDetectionEnabled,
-                        onToggleAutoCapture = { viewModel.toggleAutoCapture() },
-                        onTriggerCapture = { viewModel.triggerCaptureNow() },
-                        onRequestOverlay = {
-                            val intent = Intent(
-                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:${context.packageName}")
-                            )
-                            context.startActivity(intent)
-                        },
-                        onRequestNotification = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                        },
-                        onStartService = {
-                            if (!hasOverlayPermission) {
-                                Toast.makeText(context, "Сначала разрешите отображение поверх окон!", Toast.LENGTH_LONG).show()
-                                return@ControlPanelCard
-                            }
-                            val projectionManager =
-                                context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                            mediaProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
-                        },
-                        onStopService = {
-                            ScreenCaptureService.stop(context)
-                        }
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    // TAB 1: SCREENSHOTS - Unified LazyVerticalGrid for smooth, full-height scrolling
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 80.dp),
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        Text(
-                            text = "Кадры (${screenshots.size})",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        if (screenshots.isNotEmpty()) {
-                            TextButton(onClick = { showClearAllConfirmDialog = true }) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Очистить", color = MaterialTheme.colorScheme.error)
+                        if (apiKey.isBlank()) {
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "api_key_banner") {
+                                ApiKeyWarningBanner(onClick = { showSettingsDialog = true })
                             }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "today_stats") {
+                            TodayStatsCard(
+                                todayScreenshots = todayScreenshotsCount,
+                                todayCards = todayCardsCount,
+                                dueCardsCount = dueCards.size
+                            )
+                        }
 
-                    if (screenshots.isEmpty()) {
-                        EmptyScreenshotsPlaceholder(serviceRunning = serviceState.isRunning)
-                    } else {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            contentPadding = PaddingValues(bottom = 24.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "control_panel") {
+                            ControlPanelCard(
+                                hasOverlay = hasOverlayPermission,
+                                hasNotification = hasNotificationPermission,
+                                serviceState = serviceState,
+                                autoCaptureInterval = autoCaptureIntervalSec,
+                                isSmartDetection = smartDetectionEnabled,
+                                onToggleAutoCapture = { viewModel.toggleAutoCapture() },
+                                onTriggerCapture = { viewModel.triggerCaptureNow() },
+                                onRequestOverlay = {
+                                    val intent = Intent(
+                                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                        Uri.parse("package:${context.packageName}")
+                                    )
+                                    context.startActivity(intent)
+                                },
+                                onRequestNotification = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    }
+                                },
+                                onStartService = {
+                                    if (!hasOverlayPermission) {
+                                        Toast.makeText(context, "Сначала разрешите отображение поверх окон!", Toast.LENGTH_LONG).show()
+                                        return@ControlPanelCard
+                                    }
+                                    val projectionManager =
+                                        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                    mediaProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+                                },
+                                onStopService = {
+                                    ScreenCaptureService.stop(context)
+                                }
+                            )
+                        }
+
+                        if (batchState.isRunning || batchState.isCompleted || batchState.isCancelled) {
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "batch_progress") {
+                                BatchProgressCard(
+                                    batchState = batchState,
+                                    onCancel = { viewModel.cancelBatchGeneration() },
+                                    onDismiss = { viewModel.dismissBatchState() },
+                                    onViewDeck = {
+                                        viewModel.dismissBatchState()
+                                        selectedTabIndex = 1
+                                    }
+                                )
+                            }
+                        }
+
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "gallery_header") {
+                            GalleryHeader(
+                                screenshotsCount = screenshots.size,
+                                isBatchGenerating = batchState.isRunning,
+                                onBatchGenerate = {
+                                    if (apiKey.isBlank()) {
+                                        showSettingsDialog = true
+                                    } else {
+                                        viewModel.startBatchGeneration()
+                                    }
+                                },
+                                onClearAll = { showClearAllConfirmDialog = true }
+                            )
+                        }
+
+                        if (screenshots.isEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "empty_placeholder") {
+                                EmptyScreenshotsPlaceholder(serviceRunning = serviceState.isRunning)
+                            }
+                        } else {
                             items(screenshots, key = { it.id }) { item ->
                                 ScreenshotItemCard(
                                     item = item,
                                     onClick = { selectedScreenshotForPreview = item },
-                                    onDelete = { viewModel.deleteScreenshot(item.id) },
+                                    onDelete = {
+                                        viewModel.deleteScreenshot(item.id) {
+                                            coroutineScope.launch {
+                                                snackbarHostState.currentSnackbarData?.dismiss()
+                                                val result = snackbarHostState.showSnackbar(
+                                                    message = "Кадр удален",
+                                                    actionLabel = "Отмена",
+                                                    duration = SnackbarDuration.Short
+                                                )
+                                                if (result == SnackbarResult.ActionPerformed) {
+                                                    viewModel.undoDeleteScreenshot()
+                                                }
+                                            }
+                                        }
+                                    },
                                     onAiClick = {
                                         if (apiKey.isBlank()) {
                                             showSettingsDialog = true
@@ -478,8 +501,7 @@ fun MainScreen(
                             }
                         }
                     }
-                }
-            } else {
+                } else {
                 // TAB 2: ANKI CARDS
                 Column(
                     modifier = Modifier
@@ -925,8 +947,21 @@ fun MainScreen(
             item = item,
             onDismiss = { selectedScreenshotForPreview = null },
             onDelete = {
-                viewModel.deleteScreenshot(item.id)
+                val targetId = item.id
                 selectedScreenshotForPreview = null
+                viewModel.deleteScreenshot(targetId) {
+                    coroutineScope.launch {
+                        snackbarHostState.currentSnackbarData?.dismiss()
+                        val result = snackbarHostState.showSnackbar(
+                            message = "Кадр удален",
+                            actionLabel = "Отмена",
+                            duration = SnackbarDuration.Short
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            viewModel.undoDeleteScreenshot()
+                        }
+                    }
+                }
             },
             onAiAnalyze = {
                 selectedScreenshotForPreview = null
@@ -1120,6 +1155,243 @@ fun ApiKeyWarningBanner(onClick: () -> Unit) {
 }
 
 @Composable
+fun GalleryHeader(
+    screenshotsCount: Int,
+    isBatchGenerating: Boolean,
+    onBatchGenerate: () -> Unit,
+    onClearAll: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "Кадры ($screenshotsCount)",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+
+        if (screenshotsCount > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (!isBatchGenerating) {
+                    Button(
+                        onClick = onBatchGenerate,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(34.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "⚡ Сгенерировать все ($screenshotsCount)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                TextButton(
+                    onClick = onClearAll,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Очистить", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BatchProgressCard(
+    batchState: BatchGenerationState,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit,
+    onViewDeck: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (batchState.isRunning) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else if (batchState.isCompleted) {
+                Color(0xFFE8F5E9)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    if (batchState.isRunning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.5.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Генерация ${batchState.current} из ${batchState.total}...",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    } else if (batchState.isCompleted) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF2E7D32),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Генерация завершена!",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color(0xFF1B5E20)
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Генерация остановлена",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                if (batchState.isRunning) {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Отмена", fontSize = 11.sp)
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (batchState.successCount > 0) {
+                            Button(
+                                onClick = onViewDeck,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                            ) {
+                                Icon(Icons.Default.Style, contentDescription = null, modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("В колоду (${batchState.successCount})", fontSize = 11.sp)
+                            }
+                        }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Закрыть", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+
+            if (batchState.isRunning) {
+                Spacer(modifier = Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = { batchState.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (batchState.currentWord.isNotBlank()) batchState.currentWord else "Обработка кадров...",
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (batchState.successCount > 0) {
+                        Text(
+                            text = "✓ ${batchState.successCount}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2E7D32)
+                        )
+                    }
+                    if (batchState.skippedCount > 0) {
+                        Text(
+                            text = "⏭ ${batchState.skippedCount}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFF57C00)
+                        )
+                    }
+                    if (batchState.errorCount > 0) {
+                        Text(
+                            text = "✕ ${batchState.errorCount}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun ScreenshotItemCard(
     item: CapturedScreenshot,
     onClick: () -> Unit,
@@ -1129,9 +1401,7 @@ fun ScreenshotItemCard(
     val bitmap = rememberThumbnail(item.file)
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -1141,7 +1411,8 @@ fun ScreenshotItemCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .background(Color.Black),
+                    .background(Color.Black)
+                    .clickable { onClick() },
                 contentAlignment = Alignment.Center
             ) {
                 if (bitmap != null) {
@@ -1181,11 +1452,15 @@ fun ScreenshotItemCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                    .padding(start = 8.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onClick() }
+                ) {
                     Text(
                         text = item.formattedDate,
                         fontSize = 11.sp,
@@ -1202,12 +1477,14 @@ fun ScreenshotItemCard(
 
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.12f), CircleShape)
                 ) {
                     Icon(
                         Icons.Default.Delete,
-                        contentDescription = "Удалить",
-                        modifier = Modifier.size(16.dp),
+                        contentDescription = "Удалить фото",
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.error
                     )
                 }
@@ -3203,11 +3480,12 @@ fun ScreenshotPreviewDialog(
                     OutlinedButton(
                         onClick = onDelete,
                         modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
                         Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Удалить")
+                        Text("Удалить", maxLines = 1)
                     }
 
                     Button(
