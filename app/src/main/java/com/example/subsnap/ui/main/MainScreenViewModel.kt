@@ -582,8 +582,11 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
             result.onSuccess { info ->
                 if (info.isUpdateAvailable) {
                     _updateInfo.value = info
-                } else if (userInitiated) {
-                    _updateMessage.value = "У вас установлена самая свежая версия (${info.currentVersion})"
+                } else {
+                    _updateInfo.value = null
+                    if (userInitiated) {
+                        _updateMessage.value = "У вас установлена самая свежая версия (v${info.currentVersion})"
+                    }
                 }
             }.onFailure { err ->
                 if (userInitiated) {

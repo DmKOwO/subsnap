@@ -2671,7 +2671,7 @@ fun SettingsDialog(
                 ) {
                     Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("История версий и что нового (Changelog)")
+                    Text("История и разница версий")
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -2766,7 +2766,7 @@ fun ReleaseHistoryDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Разница версий и релизы",
+                            text = "История и разница версий",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
@@ -2885,36 +2885,72 @@ fun ReleaseHistoryDialog(
                             } else {
                                 Card(
                                     colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        containerColor = Color(0xFFE8F5E9)
                                     ),
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(14.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(14.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
                                             Icons.Default.CheckCircle,
                                             contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(24.dp)
+                                            tint = Color(0xFF2E7D32),
+                                            modifier = Modifier.size(28.dp)
                                         )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Column {
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "У вас самая свежая версия",
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = Color(0xFF1B5E20),
+                                                    modifier = Modifier.weight(1f, fill = false)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color(0xFF2E7D32),
+                                                    contentColor = Color.White
+                                                ) {
+                                                    Text(
+                                                        text = "v$currentVersion",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1,
+                                                        softWrap = false,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
                                             Text(
-                                                text = "У вас самая актуальная версия (v$currentVersion)",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp
-                                            )
-                                            Text(
-                                                text = "Все новые возможности и исправления уже активны.",
+                                                text = "Все новейшие функции и улучшения уже установлены и активны.",
                                                 fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                lineHeight = 15.sp,
+                                                color = Color(0xFF2E7D32).copy(alpha = 0.85f)
                                             )
                                         }
                                     }
                                 }
+                            }
+                        } else if (isLoading) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(20.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
                             }
                         }
                     }

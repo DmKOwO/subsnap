@@ -90,13 +90,13 @@ class GitHubUpdateManager(private val context: Context) {
 
             val info = AppUpdateInfo(
                 tagName = tagName,
-                versionName = tagName.removePrefix("v").removePrefix("V"),
+                versionName = normalizeVersion(tagName),
                 changelog = releaseNotes,
                 apkDownloadUrl = apkDownloadUrl,
                 htmlUrl = htmlUrl,
                 publishedAt = publishedAt,
                 isUpdateAvailable = isAvailable,
-                currentVersion = currentVersion
+                currentVersion = normalizeVersion(currentVersion)
             )
 
             Result.success(info)
@@ -164,10 +164,10 @@ class GitHubUpdateManager(private val context: Context) {
                     }
                 }
 
-                val cleanTag = tag.removePrefix("v").removePrefix("V").trim()
-                val cleanCurrent = currentVersion.removePrefix("v").removePrefix("V").trim()
-                val isCurrent = cleanTag == cleanCurrent
+                val cleanTag = normalizeVersion(tag)
+                val cleanCurrent = normalizeVersion(currentVersion)
                 val isNewer = isNewerVersion(tag, currentVersion)
+                val isCurrent = !isNewer && !isNewerVersion(currentVersion, tag)
 
                 list.add(
                     AppReleaseRecord(
@@ -311,13 +311,23 @@ class GitHubUpdateManager(private val context: Context) {
             }
         }
 
+        fun normalizeVersion(version: String?): String {
+            if (version == null) return ""
+            return version.trim().trimStart { it == 'v' || it == 'V' }.trim()
+        }
+
         fun calculateVersionDiff(currentVersion: String, releases: List<AppReleaseRecord>): VersionDiff {
+            val cleanCurrent = normalizeVersion(currentVersion)
             val newerReleases = releases.filter { it.isNewer }
-            val latest = releases.firstOrNull()?.versionName ?: currentVersion
             val hasUpdate = newerReleases.isNotEmpty()
+            val latest = if (hasUpdate) {
+                normalizeVersion(newerReleases.first().versionName)
+            } else {
+                cleanCurrent
+            }
 
             val sb = StringBuilder()
-            if (newerReleases.isNotEmpty()) {
+            if (hasUpdate) {
                 newerReleases.forEach { release ->
                     val title = if (release.releaseName.isNotBlank() && release.releaseName != release.tagName) {
                         "${release.releaseName} (${release.tagName})"
@@ -332,11 +342,11 @@ class GitHubUpdateManager(private val context: Context) {
                     }
                 }
             } else {
-                sb.append("У вас установлена актуальная версия SubSnap v").append(currentVersion).append(".\nВсе новейшие функции и улучшения уже доступны.")
+                sb.append("У вас установлена актуальная версия SubSnap v").append(cleanCurrent).append(".\nВсе новейшие функции и улучшения уже доступны.")
             }
 
             return VersionDiff(
-                currentVersion = currentVersion,
+                currentVersion = cleanCurrent,
                 latestVersion = latest,
                 hasUpdate = hasUpdate,
                 aggregatedChangelog = sb.toString().trim(),
@@ -344,15 +354,20 @@ class GitHubUpdateManager(private val context: Context) {
             )
         }
 
-        fun isNewerVersion(remoteTag: String, currentVersion: String): Boolean {
+        fun isNewerVersion(remoteTag: String?, currentVersion: String?): Boolean {
             try {
-                val cleanRemote = remoteTag.removePrefix("v").removePrefix("V").trim()
-                val cleanCurrent = currentVersion.removePrefix("v").removePrefix("V").trim()
+                val cleanRemote = normalizeVersion(remoteTag)
+                val cleanCurrent = normalizeVersion(currentVersion)
 
-                if (cleanRemote == cleanCurrent) return false
+                if (cleanRemote.isBlank() || cleanCurrent.isBlank()) return false
+                if (cleanRemote.equals(cleanCurrent, ignoreCase = true)) return false
 
-                val remoteParts = cleanRemote.split(".").map { it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0 }
-                val currentParts = cleanCurrent.split(".").map { it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0 }
+                val remoteParts = cleanRemote.split(".").map { part ->
+                    Regex("""^\d+""").find(part.trim())?.value?.toIntOrNull() ?: 0
+                }
+                val currentParts = cleanCurrent.split(".").map { part ->
+                    Regex("""^\d+""").find(part.trim())?.value?.toIntOrNull() ?: 0
+                }
 
                 val maxLen = maxOf(remoteParts.size, currentParts.size)
                 for (i in 0 until maxLen) {
