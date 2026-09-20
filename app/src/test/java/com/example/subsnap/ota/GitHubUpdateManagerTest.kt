@@ -102,6 +102,16 @@ class GitHubUpdateManagerTest {
     }
 
     @Test
+    fun testIsNewerVersion_v121_vs_121() {
+        assertFalse(GitHubUpdateManager.isNewerVersion("v1.2.1", "1.2.1"))
+        assertFalse(GitHubUpdateManager.isNewerVersion("1.2.1", "v1.2.1"))
+        assertTrue(GitHubUpdateManager.isNewerVersion("1.2.1", "1.2.0"))
+        assertTrue(GitHubUpdateManager.isNewerVersion("v1.2.1", "1.0.1"))
+        assertFalse(GitHubUpdateManager.isNewerVersion("v1.2.0", "1.2.1"))
+        assertFalse(GitHubUpdateManager.isNewerVersion("1.0.1", "1.2.1"))
+    }
+
+    @Test
     fun testIsNewerVersion_localAheadOfRemote() {
         // Local is 1.2.0, remote release is v1.0.2 (must NOT report update available!)
         assertFalse(GitHubUpdateManager.isNewerVersion("v1.0.2", "1.2.0"))
